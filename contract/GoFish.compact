@@ -1,0 +1,104 @@
+
+module GoFish {
+    import CompactStandardLibrary;
+
+    export enum GamePhase {
+        Setup,
+        TurnStart,
+        WaitForResponse,
+        WaitForTransfer,
+        WaitForDraw,
+        WaitForDrawCheck,
+        GameOver
+    }
+
+    export ledger currentTurn: Uint<64>; // 1 or 2
+    export ledger phase: GamePhase;
+    export ledger scoreP1: Uint<8>;
+    export ledger scoreP2: Uint<8>;
+    export ledger totalBooks: Uint<8>; // Total books completed (game ends at 13)
+    export ledger cardsDealtP1: Counter; // Track cards dealt during setup
+    export ledger cardsDealtP2: Counter;
+    
+    export circuit init_game(): [] {
+        currentTurn = 1;
+        phase = GamePhase.Setup;
+        scoreP1 = 0;
+        scoreP2 = 0;
+        totalBooks = 0;
+        return [];
+    }
+    
+    // Switch turns between players
+    export circuit switchTurn(): [] {
+        if (currentTurn == 1 as Uint<64>) {
+            currentTurn = 2;
+        } else {
+            currentTurn = 1;
+        }
+        phase = GamePhase.TurnStart;
+        return [];
+    }
+    
+    // Set game phase
+    export circuit setPhase(newPhase: GamePhase): [] {
+        phase = disclose(newPhase);
+        return [];
+    }
+    
+    // Add score for a player making a book
+    export circuit addScore(playerId: Uint<64>): [] {
+        const disclosed_playerId = disclose(playerId);
+        if (disclosed_playerId == 1 as Uint<64>) {
+            scoreP1 = scoreP1 + 1 as Uint<8>;
+        } else if (disclosed_playerId == 2 as Uint<64>) {
+            scoreP2 = scoreP2 + 1 as Uint<8>;
+        }
+        totalBooks = totalBooks + 1 as Uint<8>;
+        // Check if game is over (all 13 books completed)
+        if (totalBooks == 13 as Uint<8>) {
+            phase = GamePhase.GameOver;
+        }
+        return [];
+    }
+    
+    // Mark that a card was dealt during setup
+    export circuit markCardDealt(playerId: Uint<64>): [] {
+        const disclosed_playerId = disclose(playerId);
+        if (disclosed_playerId == 1 as Uint<64>) {
+            cardsDealtP1.increment(1);
+        } else if (disclosed_playerId == 2 as Uint<64>) {
+            cardsDealtP2.increment(1);
+        }
+        return [];
+    }
+    
+    // Check if initial dealing is complete (7 cards each for 2 players)
+    export circuit isDealingComplete(): Boolean {
+        return cardsDealtP1 >= 7 && cardsDealtP2 >= 7;
+    }
+    
+    // Transition from Setup to TurnStart once dealing is done
+    export circuit startGame(): [] {
+        assert(phase == GamePhase.Setup, "Game not in setup phase");
+        assert(isDealingComplete(), "Cards not yet dealt to both players");
+        phase = GamePhase.TurnStart;
+        return [];
+    }
+    
+    // Check if it's game over
+    export circuit isGameOver(): Boolean {
+        return phase == GamePhase.GameOver;
+    }
+    
+    // Get current player's turn
+    export circuit getCurrentTurn(): Uint<64> {
+        return currentTurn;
+    }
+    
+    // End game (when deck empty and a player has no cards)
+    export circuit endGame(): [] {
+        phase = GamePhase.GameOver;
+        return [];
+    }
+}

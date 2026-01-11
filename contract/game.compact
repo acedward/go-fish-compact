@@ -1,0 +1,392 @@
+pragma language_version >= 0.19.0;
+
+import CompactStandardLibrary;
+import CompactStandardLibrary prefix std_;
+
+import './Deck' prefix deck_;
+import './Hand' prefix hand_p1_;
+import './Hand' prefix hand_p2_;
+import './GoFish' prefix go_fish_;
+
+constructor() {
+    deck_init_deck();
+    go_fish_init_game();
+    hand_p1_init_hand();
+    hand_p2_init_hand();
+}
+
+// ============================================
+// SETUP PHASE CIRCUITS
+// ============================================
+
+// Deal a single card to a player during setup (call 7 times per player)
+export circuit dealCard(toPlayerId: Uint<64>): CurvePoint {
+    assert(go_fish_phase == go_fish_GamePhase.Setup, "Not in setup phase");
+    const disclosed_playerId = disclose(toPlayerId);
+    assert(disclosed_playerId == 1 as Uint<64> || disclosed_playerId == 2 as Uint<64>, "Invalid player index");
+    
+    const card = getTopCardForOpponent(toPlayerId);
+    go_fish_markCardDealt(toPlayerId);
+    return card;
+}
+
+// Both players must apply mask before dealing
+export circuit applyMask(playerId: Uint<64>): [] {
+    return deck_apply_mask_to_deck(playerId);
+}
+
+// Start the game after dealing is complete
+export circuit startGame(): [] {
+    return go_fish_startGame();
+}
+
+export circuit get_top_card_index(): Uint<32> {
+    return deck_topCardIndex;
+}
+export circuit get_deck_size(): Uint<64> {
+    return deck_deckSize;
+}
+
+// ============================================
+// CARD TRANSFER CIRCUITS
+// ============================================
+export circuit partial_decryption(point: CurvePoint, playerId: Uint<64>): CurvePoint {
+    return deck_partial_decryption(point, playerId);
+}
+
+// Transfer a single card from one player to another (internal use)
+export circuit moveCardFromPlayerToPlayerCardInHand(fromPlayerId: Uint<64>, semiMaskedPoint: CurvePoint): [] {
+    const disclosed_playerId = disclose(fromPlayerId);
+ 
+    if (disclosed_playerId == 1 as Uint<64>) {
+        assert(hand_p1_playerHand.member(disclose(semiMaskedPoint)), "Card not in player1 hand");
+        hand_p1_removeCardFromHand(disclose(semiMaskedPoint));
+        const decrypted_point = deck_partial_decryption(semiMaskedPoint, 1);
+
+        const [secret, invScalar] = deck_getSecretFromPlayerId(2);
+        const masked_point = std_ecMul(decrypted_point, secret);
+        hand_p2_insertCardIntoHand(disclose(masked_point));
+    } else if (disclosed_playerId == 2 as Uint<64>) {
+        assert(hand_p2_playerHand.member(disclose(semiMaskedPoint)), "Card not in player2 hand");
+        hand_p2_removeCardFromHand(disclose(semiMaskedPoint));
+        const decrypted_point = deck_partial_decryption(semiMaskedPoint, 2);
+        
+        const [secret, invScalar] = deck_getSecretFromPlayerId(1);
+        const masked_point = std_ecMul(decrypted_point, secret);
+        hand_p1_insertCardIntoHand(disclose(masked_point));
+    } else {
+        assert(false, "Invalid player index");
+    }
+}
+
+// Transfer a single card of a specific rank (for when opponent has the card)
+// Returns true if a card was transferred, false otherwise
+// This should be called multiple times until no more cards of that rank exist
+export circuit transferCardOfRank(fromPlayerId: Uint<64>, targetRank: Uint<32>, cardSuit: Uint<32>): Boolean {
+    const disclosed_playerId = disclose(fromPlayerId);
+    const disclosed_rank = disclose(targetRank);
+    const disclosed_suit = disclose(cardSuit);
+    
+    assert(disclosed_rank >= 0 && disclosed_rank < 13, "Invalid card rank");
+    assert(disclosed_suit >= 0 && disclosed_suit < 4, "Invalid card suit");
+    
+    // Calculate card index: rank + (suit * 13)
+    const cardIndex = (disclosed_rank + (disclosed_suit * 13 as Uint<32>)) as Uint<32>;
+    const baseCard = deck_reverseDeckCurveToCard.lookup(cardIndex) as CurvePoint;
+    
+    if (disclosed_playerId == 1 as Uint<64>) {
+        // Check if player 1 has this specific card
+        if (hand_p1_doesPlayerHaveCard(baseCard)) {
+            // Need to find the masked version in their hand
+            // The card in hand is masked with player 1's key only
+            const [secret1, inv1] = deck_getSecretFromPlayerId(1);
+            const maskedCard = std_ecMul(baseCard, secret1);
+            
+            if (hand_p1_playerHand.member(disclose(maskedCard))) {
+                moveCardFromPlayerToPlayerCardInHand(1 as Uint<64>, maskedCard);
+                return true;
+            }
+        }
+    } else if (disclosed_playerId == 2 as Uint<64>) {
+        if (hand_p2_doesPlayerHaveCard(baseCard)) {
+            const [secret2, inv2] = deck_getSecretFromPlayerId(2);
+            const maskedCard = std_ecMul(baseCard, secret2);
+            
+            if (hand_p2_playerHand.member(disclose(maskedCard))) {
+                moveCardFromPlayerToPlayerCardInHand(2 as Uint<64>, maskedCard);
+                return true;
+            }
+        }
+    }
+    
+    return false;
+}
+
+// ============================================
+// DRAWING CARDS
+// ============================================
+
+// Draw a card from deck for a player (used during setup and "Go Fish")
+// Returns a card masked with only the receiving player's key
+//
+// How it works:
+//   - Deck cards are masked: P × s1 × s2 (both players' secrets)
+//   - getTopCard(1) removes P2's mask → P × s1 (only P1's mask remains)
+//   - getTopCard(2) removes P1's mask → P × s2 (only P2's mask remains)
+//   - So to give card to PlayerX, call getTopCard(X) to keep their mask
+export circuit getTopCardForOpponent(toPlayerId: Uint<64>): CurvePoint {
+    const disclosed_playerId = disclose(toPlayerId);
+    assert(disclosed_playerId == 1 as Uint<64> || disclosed_playerId == 2 as Uint<64>, "Invalid player index");
+    if (disclosed_playerId == 1 as Uint<64>) {
+        // For P1: getTopCard(1) removes P2's mask, keeps P1's → P1 can decrypt
+        const semi_encrypted_point = deck_getTopCard(1);
+        hand_p1_insertCardIntoHand(semi_encrypted_point);
+        return semi_encrypted_point;
+    } else { // (disclosed_playerId == 2 as Uint<64>) {
+        // For P2: getTopCard(2) removes P1's mask, keeps P2's → P2 can decrypt
+        const semi_encrypted_point = deck_getTopCard(2);
+        hand_p2_insertCardIntoHand(semi_encrypted_point);
+        return semi_encrypted_point;
+    }
+}
+
+// "Go Fish" - draw a card when opponent doesn't have requested rank
+// Returns the drawn card point
+export circuit goFish(playerId: Uint<64>): CurvePoint {
+    assert(go_fish_phase == go_fish_GamePhase.WaitForDraw || 
+           go_fish_phase == go_fish_GamePhase.TurnStart, "Not in draw phase");
+    
+    const card = getTopCardForOpponent(playerId);
+    
+    // After drawing, switch turns (unless they drew the card they asked for)
+    go_fish_setPhase(go_fish_GamePhase.WaitForDrawCheck);
+    
+    return card;
+}
+
+// After Go Fish, check if drawn card matches requested rank
+// If yes, player gets another turn; if no, switch turns
+export circuit afterGoFish(drewRequestedCard: Boolean): [] {
+    assert(go_fish_phase == go_fish_GamePhase.WaitForDrawCheck, "Not waiting for draw check");
+    
+    if (disclose(drewRequestedCard)) {
+        // Player drew the card they asked for - they get another turn
+        go_fish_setPhase(go_fish_GamePhase.TurnStart);
+    } else {
+        // Switch turns
+        go_fish_switchTurn();
+    }
+    return [];
+}
+
+export circuit get_card_from_point(point: CurvePoint): Field {
+    return deck_getCardFromPoint(point);
+}
+
+// ============================================
+// CARD CHECKING CIRCUITS
+// ============================================
+
+// Check if a player has any card of a specific rank
+// Note: Cards in hand are MASKED (basePoint × playerSecret), so we must
+// mask the base points before checking membership
+export circuit doesPlayerHaveCard(playerId: Uint<64>, _targetRank: Uint<32>): Boolean {
+    // 1. Validate Input (Standard deck ranks are 0..12 for A-K)
+    const disclosed_playerId = disclose(playerId);
+    const targetRank = disclose(_targetRank);
+    assert(targetRank >= 0 && targetRank < 13, "Invalid card rank");
+    assert(playerId == 1 as Uint<64> || playerId == 2 as Uint<64>, "Invalid player index");
+
+    // Get base (unmasked) card points for all 4 suits of this rank
+    const baseCard1 = deck_reverseDeckCurveToCard.lookup(targetRank) as CurvePoint;
+    const baseCard2 = deck_reverseDeckCurveToCard.lookup(targetRank+13 as Uint<32>) as CurvePoint;
+    const baseCard3 = deck_reverseDeckCurveToCard.lookup(targetRank+26 as Uint<32>) as CurvePoint;
+    const baseCard4 = deck_reverseDeckCurveToCard.lookup(targetRank+39 as Uint<32>) as CurvePoint;
+
+    if (disclosed_playerId == 1 as Uint<64>) {
+        // Mask cards with P1's secret to match what's stored in hand
+        const [secret1, inv1] = deck_getSecretFromPlayerId(1);
+        const card1 = std_ecMul(baseCard1, secret1);
+        const card2 = std_ecMul(baseCard2, secret1);
+        const card3 = std_ecMul(baseCard3, secret1);
+        const card4 = std_ecMul(baseCard4, secret1);
+        return (
+            hand_p1_playerHand.member(disclose(card1)) ||
+            hand_p1_playerHand.member(disclose(card2)) ||
+            hand_p1_playerHand.member(disclose(card3)) ||
+            hand_p1_playerHand.member(disclose(card4))
+        );
+    } else if (disclosed_playerId == 2 as Uint<64>) {
+        // Mask cards with P2's secret
+        const [secret2, inv2] = deck_getSecretFromPlayerId(2);
+        const card1 = std_ecMul(baseCard1, secret2);
+        const card2 = std_ecMul(baseCard2, secret2);
+        const card3 = std_ecMul(baseCard3, secret2);
+        const card4 = std_ecMul(baseCard4, secret2);
+        return (
+            hand_p2_playerHand.member(disclose(card1)) ||
+            hand_p2_playerHand.member(disclose(card2)) ||
+            hand_p2_playerHand.member(disclose(card3)) ||
+            hand_p2_playerHand.member(disclose(card4))
+        );
+    }
+    return false;
+}
+
+// Count how many cards of a specific rank a player has (0-4)
+// Note: Cards in hand are MASKED, so we mask base points before checking
+export circuit countCardsOfRank(playerId: Uint<64>, targetRank: Uint<32>): Uint<8> {
+    const disclosed_playerId = disclose(playerId);
+    const disclosed_rank = disclose(targetRank);
+    assert(disclosed_rank >= 0 && disclosed_rank < 13, "Invalid card rank");
+
+    // Get base (unmasked) card points for all 4 suits of this rank
+    const baseCard1 = deck_reverseDeckCurveToCard.lookup(disclosed_rank) as CurvePoint;
+    const baseCard2 = deck_reverseDeckCurveToCard.lookup(disclosed_rank+13 as Uint<32>) as CurvePoint;
+    const baseCard3 = deck_reverseDeckCurveToCard.lookup(disclosed_rank+26 as Uint<32>) as CurvePoint;
+    const baseCard4 = deck_reverseDeckCurveToCard.lookup(disclosed_rank+39 as Uint<32>) as CurvePoint;
+    
+    if (disclosed_playerId == 1 as Uint<64>) {
+        // Mask cards with P1's secret to match what's stored in hand
+        const [secret1, inv1] = deck_getSecretFromPlayerId(1);
+        const card1 = std_ecMul(baseCard1, secret1);
+        const card2 = std_ecMul(baseCard2, secret1);
+        const card3 = std_ecMul(baseCard3, secret1);
+        const card4 = std_ecMul(baseCard4, secret1);
+        
+        const c1: Uint<8> = hand_p1_doesPlayerHaveCardN(disclose(card1));
+        const c2: Uint<8> = hand_p1_doesPlayerHaveCardN(disclose(card2));
+        const c3: Uint<8> = hand_p1_doesPlayerHaveCardN(disclose(card3));
+        const c4: Uint<8> = hand_p1_doesPlayerHaveCardN(disclose(card4));
+        return (c1 + c2 + c3 + c4) as Uint<8>;
+    } else if (disclosed_playerId == 2 as Uint<64>) {
+        // Mask cards with P2's secret
+        const [secret2, inv2] = deck_getSecretFromPlayerId(2);
+        const card1 = std_ecMul(baseCard1, secret2);
+        const card2 = std_ecMul(baseCard2, secret2);
+        const card3 = std_ecMul(baseCard3, secret2);
+        const card4 = std_ecMul(baseCard4, secret2);
+        
+        const c1: Uint<8> = hand_p2_doesPlayerHaveCardN(disclose(card1));
+        const c2: Uint<8> = hand_p2_doesPlayerHaveCardN(disclose(card2));
+        const c3: Uint<8> = hand_p2_doesPlayerHaveCardN(disclose(card3));
+        const c4: Uint<8> = hand_p2_doesPlayerHaveCardN(disclose(card4));
+        return (c1 + c2 + c3 + c4) as Uint<8>;
+    }
+    return 0;
+}
+
+// ============================================
+// BOOK SCORING CIRCUITS
+// ============================================
+
+// Check if a player has a book (4 of a kind) and score it
+// Removes the 4 cards from hand and adds a point
+export circuit checkAndScoreBook(playerId: Uint<64>, targetRank: Uint<32>): Boolean {
+    const cardCount = countCardsOfRank(playerId, targetRank);
+    
+    if (cardCount == 4 as Uint<8>) {
+        // Player has a book! Remove all 4 cards and score
+        const disclosed_playerId = disclose(playerId);
+        const disclosed_rank = disclose(targetRank);
+        
+        const card1 = deck_reverseDeckCurveToCard.lookup(disclosed_rank) as CurvePoint;
+        const card2 = deck_reverseDeckCurveToCard.lookup(disclosed_rank+13 as Uint<32>) as CurvePoint;
+        const card3 = deck_reverseDeckCurveToCard.lookup(disclosed_rank+26 as Uint<32>) as CurvePoint;
+        const card4 = deck_reverseDeckCurveToCard.lookup(disclosed_rank+39 as Uint<32>) as CurvePoint;
+        
+        if (disclosed_playerId == 1 as Uint<64>) {
+            // Get masked versions and remove from hand
+            const [secret1, inv1] = deck_getSecretFromPlayerId(1);
+            hand_p1_removeCardFromHandForBook(std_ecMul(card1, secret1));
+            hand_p1_removeCardFromHandForBook(std_ecMul(card2, secret1));
+            hand_p1_removeCardFromHandForBook(std_ecMul(card3, secret1));
+            hand_p1_removeCardFromHandForBook(std_ecMul(card4, secret1));
+        } else if (disclosed_playerId == 2 as Uint<64>) {
+            const [secret2, inv2] = deck_getSecretFromPlayerId(2);
+            hand_p2_removeCardFromHandForBook(std_ecMul(card1, secret2));
+            hand_p2_removeCardFromHandForBook(std_ecMul(card2, secret2));
+            hand_p2_removeCardFromHandForBook(std_ecMul(card3, secret2));
+            hand_p2_removeCardFromHandForBook(std_ecMul(card4, secret2));
+        }
+        
+        // Add score
+        go_fish_addScore(playerId);
+        return true;
+    }
+    
+    return false;
+}
+
+// ============================================
+// GAME STATE QUERIES
+// ============================================
+
+// Get current game phase
+export circuit getGamePhase(): go_fish_GamePhase {
+    return go_fish_phase;
+}
+
+// Get current player's turn
+export circuit getCurrentTurn(): Uint<64> {
+    return go_fish_currentTurn;
+}
+
+// Get player scores
+export circuit getScores(): [Uint<8>, Uint<8>] {
+    return [go_fish_scoreP1, go_fish_scoreP2];
+}
+
+// Get hand sizes
+export circuit getHandSizes(): [Uint<64>, Uint<64>] {
+    return [hand_p1_handSize, hand_p2_handSize];
+}
+
+// Check if game is over
+export circuit isGameOver(): Boolean {
+    return go_fish_phase == go_fish_GamePhase.GameOver;
+}
+
+// Check if deck is empty
+export circuit isDeckEmpty(): Boolean {
+    return deck_topCardIndex >= deck_deckSize;
+}
+
+// End game when deck is empty and a player has no cards
+export circuit checkAndEndGame(): Boolean {
+    if (isDeckEmpty()) {
+        const handSizes = getHandSizes();
+        if (handSizes[0] == 0 as Uint<64> || handSizes[1] == 0 as Uint<64>) {
+            go_fish_endGame();
+            return true;
+        }
+    }
+    return false;
+}
+
+// ============================================
+// TURN MANAGEMENT
+// ============================================
+
+// Called when opponent has the requested card - player gets another turn
+export circuit opponentHadCard(): [] {
+    assert(go_fish_phase == go_fish_GamePhase.WaitForResponse || 
+           go_fish_phase == go_fish_GamePhase.WaitForTransfer, "Invalid phase for this action");
+    go_fish_setPhase(go_fish_GamePhase.TurnStart);
+    return [];
+}
+
+// Switch to other player's turn
+export circuit switchTurn(): [] {
+    return go_fish_switchTurn();
+}
+
+export circuit get_player_hand_size(playerId: Uint<64>): Uint<64> {
+    const disclosed_playerId = disclose(playerId);
+    if (disclosed_playerId == 1 as Uint<64>) {
+        return hand_p1_handSize;
+    } else if (disclosed_playerId == 2 as Uint<64>) {
+        return hand_p2_handSize;
+    }
+    return 0 as Uint<64>;
+}

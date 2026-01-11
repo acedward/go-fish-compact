@@ -8,9 +8,10 @@
 		"node": ">=16"
 	},
 	"scripts": {
-		"compile": "compact compile +0.27.0 go-fish.compact go-fish",
+		"compile": "compact compile +0.27.0 contract/game.compact go-fish",
 		"build": "tsc",
-		"start": "npm run build && node dist/cli.js"
+		"start": "npm run build && node dist/cli.js",
+		"test": "node source/go-fish.test.ts"
 	},
 	"files": [
 		"dist"
