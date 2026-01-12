@@ -17,7 +17,7 @@ export class CardSimulator {
 		// Type assertion needed because go-fish contract witnesses have different signatures
 		// than the deck-full contract interface we're importing
 		this.contract = new Contract<PrivateState, Witnesses<PrivateState>>(
-			witnesses as any,
+			witnesses,
 		);
 		const {currentPrivateState, currentContractState, currentZswapLocalState} =
 			this.contract.initialState(createConstructorContext({}, '0'.repeat(64)));

@@ -19,6 +19,9 @@ module GoFish {
     export ledger totalBooks: Uint<8>; // Total books completed (game ends at 13)
     export ledger cardsDealtP1: Counter; // Track cards dealt during setup
     export ledger cardsDealtP2: Counter;
+    export ledger lastAskedRank: Uint<32>; // Track the rank being asked for (for state recovery)
+    export ledger maskAppliedP1: Boolean; // Track if player 1 applied mask
+    export ledger maskAppliedP2: Boolean; // Track if player 2 applied mask
     
     export circuit init_game(): [] {
         currentTurn = 1;
@@ -26,6 +29,9 @@ module GoFish {
         scoreP1 = 0;
         scoreP2 = 0;
         totalBooks = 0;
+        lastAskedRank = 255 as Uint<32>; // 255 = no pending request
+        maskAppliedP1 = false;
+        maskAppliedP2 = false;
         return [];
     }
     
@@ -100,5 +106,55 @@ module GoFish {
     export circuit endGame(): [] {
         phase = GamePhase.GameOver;
         return [];
+    }
+    
+    // Set the last asked rank (called by askForCard)
+    export circuit setLastAskedRank(rank: Uint<32>): [] {
+        lastAskedRank = disclose(rank);
+        return [];
+    }
+    
+    // Clear the last asked rank (called after response)
+    export circuit clearLastAskedRank(): [] {
+        lastAskedRank = 255 as Uint<32>;
+        return [];
+    }
+    
+    // Get the last asked rank (for state recovery)
+    export circuit getLastAskedRank(): Uint<32> {
+        return lastAskedRank;
+    }
+    
+    // Mark that a player has applied their mask
+    export circuit markMaskApplied(playerId: Uint<64>): [] {
+        const disclosed_playerId = disclose(playerId);
+        if (disclosed_playerId == 1 as Uint<64>) {
+            maskAppliedP1 = true;
+        } else if (disclosed_playerId == 2 as Uint<64>) {
+            maskAppliedP2 = true;
+        }
+        return [];
+    }
+    
+    // Check if a player has applied their mask
+    export circuit hasMaskApplied(playerId: Uint<64>): Boolean {
+        const disclosed_playerId = disclose(playerId);
+        if (disclosed_playerId == 1 as Uint<64>) {
+            return maskAppliedP1;
+        } else if (disclosed_playerId == 2 as Uint<64>) {
+            return maskAppliedP2;
+        }
+        return false;
+    }
+    
+    // Get the number of cards dealt to a player (for state recovery)
+    export circuit getCardsDealt(playerId: Uint<64>): Uint<64> {
+        const disclosed_playerId = disclose(playerId);
+        if (disclosed_playerId == 1 as Uint<64>) {
+            return cardsDealtP1 as Uint<64>;
+        } else if (disclosed_playerId == 2 as Uint<64>) {
+            return cardsDealtP2 as Uint<64>;
+        }
+        return 0 as Uint<64>;
     }
 }
