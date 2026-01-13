@@ -500,8 +500,10 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	// ============================================
 	logSection('TEST 11: dealCards');
 	try {
-		const r = impureCircuits.dealCards(sim.circuitContext);
-		sim.circuitContext = r.context;
+		const r1 = impureCircuits.dealCards(sim.circuitContext, BigInt(1));
+		sim.circuitContext = r1.context;
+		const r2 = impureCircuits.dealCards(sim.circuitContext, BigInt(2));
+		sim.circuitContext = r2.context;
 		
 		// Get hand sizes to verify
 		const handR = circuits.getHandSizes(sim.circuitContext);
@@ -1044,8 +1046,10 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	// ============================================
 	logSection('TEST 33: dealCards (Setup phase)');
 	try {
-		const r = impureCircuits.dealCards(sim.circuitContext);
-		sim.circuitContext = r.context;
+		const r1 = impureCircuits.dealCards(sim.circuitContext, BigInt(1));
+		sim.circuitContext = r1.context;
+		const r2 = impureCircuits.dealCards(sim.circuitContext, BigInt(2));
+		sim.circuitContext = r2.context;
 		
 		// Discover hands using doesPlayerHaveSpecificCard
 		for (let cardIdx = 0; cardIdx < 52; cardIdx++) {
@@ -1113,10 +1117,12 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 			logInfo(`Player ${currentPlayer} asking for rank ${RANK_NAMES[askedRank]}`);
 			
 			// Call askForCardAndProcess - this handles ask + response in one call
-			const r = impureCircuits.askForCardAndProcess(sim.circuitContext, BigInt(currentPlayer), BigInt(askedRank));
+			const r = impureCircuits.askForCard(sim.circuitContext, BigInt(currentPlayer), BigInt(askedRank));
 			sim.circuitContext = r.context;
+			const r2 = impureCircuits.respondToAsk(sim.circuitContext, BigInt(currentPlayer));
+			sim.circuitContext = r2.context;
 			
-			const result = r.result;
+			const result = r2.result;
 			opponentHadCards = result[0] as boolean;
 			const cardsTransferred = Number(result[1]);
 			
@@ -1438,6 +1444,9 @@ async function runGameSimulation(sim: GoFishSimulator) {
 	
 	while (!isGameOver(sim, circuits) && turnCount < MAX_TURNS) {
 		turnCount++;
+		if (turnCount % 10 === 0) {
+			log(`Turn ${turnCount}...`);
+		}
 		
 		// Get current player from contract
 		const turnR = circuits.getCurrentTurn(sim.circuitContext);
@@ -1492,10 +1501,12 @@ async function runGameSimulation(sim: GoFishSimulator) {
 		
 		try {
 			// Use askForCardAndProcess which handles everything
-			const askR = impureCircuits.askForCardAndProcess(sim.circuitContext, BigInt(currentPlayer), BigInt(rankToAsk));
+			const askR = impureCircuits.askForCard(sim.circuitContext, BigInt(currentPlayer), BigInt(rankToAsk));
 			sim.circuitContext = askR.context;
+			const askR2 = impureCircuits.respondToAsk(sim.circuitContext, BigInt(currentPlayer));
+			sim.circuitContext = askR2.context;
 			
-			const opponentHadCards = askR.result[0] as boolean;
+			const opponentHadCards = askR2.result[0] as boolean;
 			// cardsTransferred = askR.result[1] - available if needed for logging
 			
 			if (opponentHadCards) {

@@ -37,25 +37,6 @@ const getShuffleSeed = (index: number) => {
  */
 const JUBJUB_SCALAR_FIELD_ORDER =
 	6554484396890773809930967563523245729705921265872317281365359162392183254199n;
-// const MIDNIGHT_FIELD_MODULUS = 28948022309329048855892746252171976963317496166410141009864396001978282409985n;
-// const BN254_SCALAR_MODULUS =
-21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-
-// Helper to calculate (base^exp) % mod
-// function modPow(base: bigint, exp: bigint, mod: bigint): bigint {
-//   let res = 1n;
-//   base %= mod;
-//   while (exp > 0n) {
-//     if (exp % 2n === 1n) res = (res * base) % mod;
-//     base = (base * base) % mod;
-//     exp /= 2n;
-//   }
-//   return res;
-// }
-
-// function modInverse(n: bigint, mod: bigint): bigint {
-//   return modPow(n, mod - 2n, mod);
-// }
 
 /**
  * Calculates the modular multiplicative inverse of a modulo n.
@@ -158,3 +139,49 @@ export const witnesses = {
 		return [privateState, getSecretKey(Number(playerIndex))];
 	},
 };
+
+/**
+ * Creates player-specific witnesses that only allow access to the player's own keys.
+ * Throws an error if the opponent's playerIndex is accessed.
+ */
+export function createPlayerWitnesses(playerId: 1 | 2) {
+	const opponentId = playerId === 1 ? 2 : 1;
+	
+	return {
+		...witnesses,
+		shuffle_seed: (
+			{privateState}: WitnessContext<Ledger, PrivateState>,
+			playerIndex: bigint,
+		): [PrivateState, Uint8Array] => {
+			const index = Number(playerIndex);
+			if (index === opponentId) {
+				console.log(`Player ${playerId} cannot access opponent's shuffle seed ${opponentId}`);
+				Error.stackTraceLimit = Infinity;
+				console.trace();
+				throw new Error(`Player ${playerId} cannot access opponent's shuffle seed`);
+			}
+			if (index !== playerId) {
+				console.trace();
+				throw new Error(`Invalid player index ${index} for player ${playerId}`);
+			}
+			return [privateState, getShuffleSeed(index)];
+		},
+		player_secret_key: (
+			{privateState}: WitnessContext<Ledger, PrivateState>,
+			playerIndex: bigint,
+		): [PrivateState, bigint] => {
+			const index = Number(playerIndex);
+			if (index === opponentId) {
+				console.log(`Player ${playerId} cannot access opponent's secret key ${opponentId}`);
+				Error.stackTraceLimit = Infinity;
+				console.trace();
+				throw new Error(`Player ${playerId} cannot access opponent's secret key`);
+			}
+			if (index !== playerId) {
+				console.trace();
+				throw new Error(`Invalid player index ${index} for player ${playerId}`);
+			}
+			return [privateState, getSecretKey(index)];
+		},
+	};
+}

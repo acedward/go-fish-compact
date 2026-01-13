@@ -2,50 +2,92 @@
 module Hand {
     import CompactStandardLibrary;
 
-    export ledger playerHand: Set<CurvePoint>;
-    export ledger handSize: Counter;
+    export ledger playerHand1: Set<CurvePoint>;
+    export ledger handSize1: Counter;
+    export ledger playerHand2: Set<CurvePoint>;
+    export ledger handSize2: Counter;
 
-    export circuit init_hand(): [] {
+    export circuit init_hands(): [] {
         return [];
     }
     
     // Get current hand size
-    export circuit getHandSize(): Uint<64> {
-        return handSize;
+    export circuit getHandSize(playerId: Uint<64>): Uint<64> {
+        if (playerId == 1 as Uint<64>) {
+            return handSize1;
+        } else if (playerId == 2 as Uint<64>) {
+            return handSize2;
+        } else {
+            assert(false, "Invalid player index");
+        }
+        return 0 as Uint<64>;
     }
 
     // Cards in players hands are semi-masked, meaning they are 
     // masked only by the player's secret key.
-    export circuit removeCardFromHand(semiMaskedPoint: CurvePoint): CurvePoint {
-        assert(playerHand.member(disclose(semiMaskedPoint)), "Card not in player hand");
-        playerHand.remove(disclose(semiMaskedPoint));
-        handSize.decrement(1);
+    export circuit removeCardFromHand(playerId: Uint<64>, semiMaskedPoint: CurvePoint): CurvePoint {
+        if (playerId == 1 as Uint<64>) {
+            assert(playerHand1.member(disclose(semiMaskedPoint)), "Card not in player hand");
+            playerHand1.remove(disclose(semiMaskedPoint));
+            handSize1.decrement(1);
+            return semiMaskedPoint;
+        } else if (playerId == 2 as Uint<64>) {
+            assert(playerHand2.member(disclose(semiMaskedPoint)), "Card not in player hand");
+            playerHand2.remove(disclose(semiMaskedPoint));
+            handSize2.decrement(1);
+            return semiMaskedPoint;
+        } 
+        assert(false, "Invalid player index");
         return semiMaskedPoint;
+        
     }
 
-    export circuit insertCardIntoHand(card: CurvePoint): [] {
-        playerHand.insert(card);
-        handSize.increment(1);
+    export circuit insertCardIntoHand(playerId: Uint<64>, card: CurvePoint): [] {
+        if (playerId == 1 as Uint<64>) {
+            playerHand1.insert(card);
+            handSize1.increment(1);
+        } else if (playerId == 2 as Uint<64>) {
+            playerHand2.insert(card);
+            handSize2.increment(1);
+        } else {
+            assert(false, "Invalid player index");
+        }
         return [];
     }
     
     // Remove card without decrementing counter (for book removal)
-    export circuit removeCardFromHandForBook(semiMaskedPoint: CurvePoint): [] {
-        assert(playerHand.member(disclose(semiMaskedPoint)), "Card not in player hand");
-        playerHand.remove(disclose(semiMaskedPoint));
-        handSize.decrement(1);
+    export circuit removeCardFromHandForBook(playerId: Uint<64>, semiMaskedPoint: CurvePoint): [] {
+        if (playerId == 1 as Uint<64>) {
+            assert(playerHand1.member(disclose(semiMaskedPoint)), "Card not in player hand");
+            playerHand1.remove(disclose(semiMaskedPoint));
+            handSize1.decrement(1);
+        } else if (playerId == 2 as Uint<64>) {
+            assert(playerHand2.member(disclose(semiMaskedPoint)), "Card not in player hand");
+            playerHand2.remove(disclose(semiMaskedPoint));
+            handSize2.decrement(1);
+        } 
+        assert(false, "Invalid player index"); 
         return [];
     }
 
-    export circuit doesPlayerHaveCard(card: CurvePoint): Boolean {
-        return playerHand.member(card);
-    }
-    export circuit doesPlayerHaveCardN(card: CurvePoint): Uint<8> {
-        if (playerHand.member(card)) {
-            return 1 as Uint<8>;
-        } else {
-            return 0 as Uint<8>;
+    export circuit doesPlayerHaveCard(playerId: Uint<64>, card: CurvePoint): Boolean {
+        if (playerId == 1 as Uint<64>) {
+            return playerHand1.member(card);
+        } else if (playerId == 2 as Uint<64>) {
+            return playerHand2.member(card);
         }
+        assert(false, "Invalid player index");
+        return false;
+    }
+
+    export circuit doesPlayerHaveCardN(playerId: Uint<64>, card: CurvePoint): Uint<8> {
+        if (playerId == 1 as Uint<64>) {
+            return playerHand1.member(card) ? 1 as Uint<8> : 0 as Uint<8>;
+        } else if (playerId == 2 as Uint<64>) {
+            return playerHand2.member(card) ? 1 as Uint<8> : 0 as Uint<8>;
+        } 
+        assert(false, "Invalid player index");
+        return 0 as Uint<8>;
     }
     
 }

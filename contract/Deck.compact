@@ -16,6 +16,9 @@ module Deck {
     export ledger deckSize: Counter;
     // Index of the top card
     export ledger topCardIndex: Uint<32>;
+    // Map from semi-encrypted (player's hand) to fully-encrypted (deck) points
+    // Used for card transfers between players without needing the other player's secret
+    export ledger semiMaskedToFullyMasked: Map<CurvePoint, CurvePoint>;
 
 
     // Witnesses
@@ -85,7 +88,8 @@ module Deck {
     // This function will remove the mask applied by playerId.
     // It can return the masked point or the decrypted point.
     export circuit partial_decryption(point: CurvePoint, playerId: Uint<64>): CurvePoint {
-        const secret = player_secret_key(playerId);
+        const disclosed_playerId = disclose(playerId);
+        const secret = player_secret_key(disclosed_playerId);
         const secret_hash = std_persistentHash<Field>(secret);
         assert(playersKeysHashes.member(disclose(secret_hash)), "Player secret key unknown");
 
@@ -109,12 +113,12 @@ module Deck {
         assert(topCardIndex <= deckSize, "Top card index is greater than deck size");
         
         if (disclosed_playerId == 1 as Uint<64>) {
-            const masked_card = partial_decryption(disclose(point), 2);
+            const masked_card = partial_decryption(disclose(point), _playerId);
             // player1Hand.insert(disclose(masked_card));
             return masked_card;
         }
         else if (disclosed_playerId == 2 as Uint<64>) {
-            const masked_card = partial_decryption(disclose(point), 1);
+            const masked_card = partial_decryption(disclose(point), _playerId);
             // player2Hand.insert(disclose(masked_card));
             return masked_card;
         }
@@ -126,16 +130,40 @@ module Deck {
         return point;
     }
 
-
     circuit field_to_uint64_safe(val: Field): Uint<64> {
+        const SHIFT: Field = 18446744073709551616 as Field; // 2^64
+
+        // 1. Split val -> high, low (bits 0..64)
         const parts = split_field_bits(val);
-        const high_part = parts[0];
-        const low_part = parts[1];
-        const SHIFT: Field = 18446744073709551616 as Field;
-        // Verify: val == high * 2^64 + low
-        // We cast low_part to Field to perform the check
-        assert(val == high_part * SHIFT + (low_part as Field), "Safe truncation failed");
-        return low_part;
+        const high = parts[0];
+        const low = parts[1];
+        assert(val == high * SHIFT + (low as Field), "Safe truncation failed 1");
+
+        // 2. Split high -> h2, l2 (bits 64..128)
+        const parts2 = split_field_bits(high);
+        const h2 = parts2[0];
+        const l2 = parts2[1];
+        assert(high == h2 * SHIFT + (l2 as Field), "Safe truncation failed 2");
+
+        // 3. Split h2 -> h3, l3 (bits 128..192)
+        const parts3 = split_field_bits(h2);
+        const h3 = parts3[0];
+        const l3 = parts3[1];
+        assert(h2 == h3 * SHIFT + (l3 as Field), "Safe truncation failed 3");
+
+        // 4. Split h3 -> h4, l4 (bits 192..256)
+        // h3 contains the remaining bits (approx 62 bits for a 254-bit field).
+        // By splitting it one last time and asserting the remainder (h4) is 0,
+        // we prove h3 fits within a Uint<64> and no overflow beyond 256 bits occurred.
+        const parts4 = split_field_bits(h3);
+        const h4 = parts4[0];
+        const l4 = parts4[1];
+        assert(h3 == h4 * SHIFT + (l4 as Field), "Safe truncation failed 4");
+
+        // Ensure no bits exist beyond the 4th chunk (Field capacity is ~254 bits)
+        assert(h4 == 0 as Field, "High part too large - potential witness overflow");
+
+        return low;
     }
 
 
