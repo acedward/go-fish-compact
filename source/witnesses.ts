@@ -128,12 +128,14 @@ export const witnesses = {
 	},
 	shuffle_seed: (
 		{privateState}: WitnessContext<Ledger, PrivateState>,
+		_gameId: Uint8Array,
 		playerIndex: bigint,
 	): [PrivateState, Uint8Array] => {
 		return [privateState, getShuffleSeed(Number(playerIndex))];
 	},
 	player_secret_key: (
 		{privateState}: WitnessContext<Ledger, PrivateState>,
+		_gameId: Uint8Array,
 		playerIndex: bigint,
 	): [PrivateState, bigint] => {
 		return [privateState, getSecretKey(Number(playerIndex))];
@@ -151,6 +153,7 @@ export function createPlayerWitnesses(playerId: 1 | 2) {
 		...witnesses,
 		shuffle_seed: (
 			{privateState}: WitnessContext<Ledger, PrivateState>,
+			_gameId: Uint8Array,
 			playerIndex: bigint,
 		): [PrivateState, Uint8Array] => {
 			const index = Number(playerIndex);
@@ -168,6 +171,7 @@ export function createPlayerWitnesses(playerId: 1 | 2) {
 		},
 		player_secret_key: (
 			{privateState}: WitnessContext<Ledger, PrivateState>,
+			_gameId: Uint8Array,
 			playerIndex: bigint,
 		): [PrivateState, bigint] => {
 			const index = Number(playerIndex);

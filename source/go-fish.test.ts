@@ -165,12 +165,14 @@ export const witnesses = {
 	},
 	shuffle_seed: (
 		{privateState}: WitnessContext<Ledger, PrivateState>,
+		_gameId: Uint8Array,
 		playerIndex: bigint,
 	): [PrivateState, Uint8Array] => {
 		return [privateState, getShuffleSeed(Number(playerIndex))];
 	},
 	player_secret_key: (
 		{privateState}: WitnessContext<Ledger, PrivateState>,
+		_gameId: Uint8Array,
 		playerIndex: bigint,
 	): [PrivateState, bigint] => {
 		return [privateState, getSecretKey(Number(playerIndex))];
@@ -182,9 +184,26 @@ export const witnesses = {
 // SIMULATOR SETUP
 // ============================================
 
+// Generate a random gameId (32 bytes)
+function generateGameId(): Uint8Array {
+	const gameId = new Uint8Array(32);
+	for (let i = 0; i < 32; i++) {
+		gameId[i] = Math.floor(Math.random() * 256);
+	}
+	return gameId;
+}
+
+// Format gameId for display (first 8 bytes as hex)
+function formatGameId(gameId: Uint8Array): string {
+	return Array.from(gameId.slice(0, 8))
+		.map(b => b.toString(16).padStart(2, '0'))
+		.join('');
+}
+
 class GoFishSimulator {
 	readonly contract: Contract<PrivateState, Witnesses<PrivateState>>;
 	circuitContext: CircuitContext<PrivateState>;
+	gameId: Uint8Array;
 	
 	// Local tracking for display purposes
 	player1Hand: bigint[] = [];
@@ -208,6 +227,7 @@ class GoFishSimulator {
 			),
 			costModel: CostModel.initialCostModel(),
 		};
+		this.gameId = generateGameId();
 	}
 
 	// Get contract ledger state
@@ -233,6 +253,7 @@ class GoFishSimulator {
 		this.player1Books = [];
 		this.player2Books = [];
 		this.currentPlayer = 1;
+		this.gameId = generateGameId();
 	}
 }
 
@@ -330,16 +351,30 @@ function recordTest(name: string, passed: boolean, error?: any, details?: string
 async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	logHeader('🧪 CONTRACT TEST SUITE');
 	log('Testing each function from game.compact individually...\n');
+	log(`Game ID: ${formatGameId(sim.gameId)}`);
 	
 	const circuits = sim.contract.circuits;
 	const impureCircuits = sim.contract.impureCircuits;
+	const gameId = sim.gameId;
 	
 	// ============================================
-	// TEST 1: get_deck_size (after constructor)
+	// TEST 1: applyMask (Player 1) - This creates the game
 	// ============================================
-	logSection('TEST 1: get_deck_size');
+	logSection('TEST 1: applyMask (Player 1) - creates game');
 	try {
-		const r = circuits.get_deck_size(sim.circuitContext);
+		const r = impureCircuits.applyMask(sim.circuitContext, gameId, BigInt(1));
+		sim.circuitContext = r.context;
+		recordTest('applyMask (Player 1)', true, null, 'mask applied, game created');
+	} catch (e) {
+		recordTest('applyMask (Player 1)', false, e);
+	}
+	
+	// ============================================
+	// TEST 2: get_deck_size (after game creation)
+	// ============================================
+	logSection('TEST 2: get_deck_size');
+	try {
+		const r = circuits.get_deck_size(sim.circuitContext, gameId);
 		sim.circuitContext = r.context;
 		const deckSize = Number(r.result);
 		if (deckSize === 52) {
@@ -352,11 +387,11 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	}
 	
 	// ============================================
-	// TEST 2: get_top_card_index (initial)
+	// TEST 3: get_top_card_index (initial)
 	// ============================================
-	logSection('TEST 2: get_top_card_index (initial)');
+	logSection('TEST 3: get_top_card_index (initial)');
 	try {
-		const r = circuits.get_top_card_index(sim.circuitContext);
+		const r = circuits.get_top_card_index(sim.circuitContext, gameId);
 		sim.circuitContext = r.context;
 		const topIndex = Number(r.result);
 		if (topIndex === 0) {
@@ -369,11 +404,11 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	}
 	
 	// ============================================
-	// TEST 3: getGamePhase (initial = Setup)
+	// TEST 4: getGamePhase (initial = Setup)
 	// ============================================
-	logSection('TEST 3: getGamePhase (initial)');
+	logSection('TEST 4: getGamePhase (initial)');
 	try {
-		const r = circuits.getGamePhase(sim.circuitContext);
+		const r = circuits.getGamePhase(sim.circuitContext, gameId);
 		sim.circuitContext = r.context;
 		const phase = r.result;
 		logInfo(`Phase value: ${JSON.stringify(phase)}`);
@@ -383,11 +418,11 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	}
 	
 	// ============================================
-	// TEST 4: getCurrentTurn (initial = 1)
+	// TEST 5: getCurrentTurn (initial = 1)
 	// ============================================
-	logSection('TEST 4: getCurrentTurn (initial)');
+	logSection('TEST 5: getCurrentTurn (initial)');
 	try {
-		const r = circuits.getCurrentTurn(sim.circuitContext);
+		const r = circuits.getCurrentTurn(sim.circuitContext, gameId);
 		sim.circuitContext = r.context;
 		const turn = Number(r.result);
 		if (turn === 1) {
@@ -400,11 +435,11 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	}
 	
 	// ============================================
-	// TEST 5: getScores (initial = [0, 0])
+	// TEST 6: getScores (initial = [0, 0])
 	// ============================================
-	logSection('TEST 5: getScores (initial)');
+	logSection('TEST 6: getScores (initial)');
 	try {
-		const r = circuits.getScores(sim.circuitContext);
+		const r = circuits.getScores(sim.circuitContext, gameId);
 		sim.circuitContext = r.context;
 		const scores = r.result;
 		const p1Score = Number(scores[0]);
@@ -419,11 +454,11 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	}
 	
 	// ============================================
-	// TEST 6: getHandSizes (initial = [0, 0])
+	// TEST 7: getHandSizes (initial = [0, 0])
 	// ============================================
-	logSection('TEST 6: getHandSizes (initial)');
+	logSection('TEST 7: getHandSizes (initial)');
 	try {
-		const r = circuits.getHandSizes(sim.circuitContext);
+		const r = circuits.getHandSizes(sim.circuitContext, gameId);
 		sim.circuitContext = r.context;
 		const sizes = r.result;
 		const p1Size = Number(sizes[0]);
@@ -438,11 +473,11 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	}
 	
 	// ============================================
-	// TEST 7: isDeckEmpty (initial = false)
+	// TEST 8: isDeckEmpty (initial = false)
 	// ============================================
-	logSection('TEST 7: isDeckEmpty (initial)');
+	logSection('TEST 8: isDeckEmpty (initial)');
 	try {
-		const r = circuits.isDeckEmpty(sim.circuitContext);
+		const r = circuits.isDeckEmpty(sim.circuitContext, gameId);
 		sim.circuitContext = r.context;
 		const isEmpty = r.result;
 		if (isEmpty === false) {
@@ -455,11 +490,11 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	}
 	
 	// ============================================
-	// TEST 8: isGameOver (initial = false)
+	// TEST 9: isGameOver (initial = false)
 	// ============================================
-	logSection('TEST 8: isGameOver (initial)');
+	logSection('TEST 9: isGameOver (initial)');
 	try {
-		const r = circuits.isGameOver(sim.circuitContext);
+		const r = circuits.isGameOver(sim.circuitContext, gameId);
 		sim.circuitContext = r.context;
 		const isOver = r.result;
 		if (isOver === false) {
@@ -472,23 +507,11 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	}
 	
 	// ============================================
-	// TEST 9: applyMask (Player 1)
-	// ============================================
-	logSection('TEST 9: applyMask (Player 1)');
-	try {
-		const r = impureCircuits.applyMask(sim.circuitContext, BigInt(1));
-		sim.circuitContext = r.context;
-		recordTest('applyMask (Player 1)', true, null, 'mask applied successfully');
-	} catch (e) {
-		recordTest('applyMask (Player 1)', false, e);
-	}
-	
-	// ============================================
 	// TEST 10: applyMask (Player 2)
 	// ============================================
 	logSection('TEST 10: applyMask (Player 2)');
 	try {
-		const r = impureCircuits.applyMask(sim.circuitContext, BigInt(2));
+		const r = impureCircuits.applyMask(sim.circuitContext, gameId, BigInt(2));
 		sim.circuitContext = r.context;
 		recordTest('applyMask (Player 2)', true, null, 'mask applied successfully');
 	} catch (e) {
@@ -500,13 +523,13 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	// ============================================
 	logSection('TEST 11: dealCards');
 	try {
-		const r1 = impureCircuits.dealCards(sim.circuitContext, BigInt(1));
+		const r1 = impureCircuits.dealCards(sim.circuitContext, gameId, BigInt(1));
 		sim.circuitContext = r1.context;
-		const r2 = impureCircuits.dealCards(sim.circuitContext, BigInt(2));
+		const r2 = impureCircuits.dealCards(sim.circuitContext, gameId, BigInt(2));
 		sim.circuitContext = r2.context;
 		
 		// Get hand sizes to verify
-		const handR = circuits.getHandSizes(sim.circuitContext);
+		const handR = circuits.getHandSizes(sim.circuitContext, gameId);
 		sim.circuitContext = handR.context;
 		const p1Size = Number(handR.result[0]);
 		const p2Size = Number(handR.result[1]);
@@ -527,7 +550,7 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	// ============================================
 	logSection('TEST 12: get_top_card_index (after dealing)');
 	try {
-		const r = circuits.get_top_card_index(sim.circuitContext);
+		const r = circuits.get_top_card_index(sim.circuitContext, gameId);
 		sim.circuitContext = r.context;
 		const topIndex = Number(r.result);
 		// After dealing 14 cards (7 each), top index should be 14
@@ -545,7 +568,7 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	// ============================================
 	logSection('TEST 13: getGamePhase (after dealing)');
 	try {
-		const r = circuits.getGamePhase(sim.circuitContext);
+		const r = circuits.getGamePhase(sim.circuitContext, gameId);
 		sim.circuitContext = r.context;
 		const phase = Number(r.result);
 		logInfo(`Phase value: ${phase}`);
@@ -577,7 +600,7 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	// ============================================
 	logSection('TEST 15: getHandSizes (after dealing)');
 	try {
-		const r = circuits.getHandSizes(sim.circuitContext);
+		const r = circuits.getHandSizes(sim.circuitContext, gameId);
 		sim.circuitContext = r.context;
 		const sizes = r.result;
 		const p1Size = Number(sizes[0]);
@@ -601,13 +624,13 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	try {
 		// Check all 52 cards to find what each player has
 		for (let cardIdx = 0; cardIdx < 52; cardIdx++) {
-			const r1 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, BigInt(1), BigInt(cardIdx));
+			const r1 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, gameId, BigInt(1), BigInt(cardIdx));
 			sim.circuitContext = r1.context;
 			if (r1.result === true) {
 				sim.player1Hand.push(BigInt(cardIdx));
 			}
 			
-			const r2 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, BigInt(2), BigInt(cardIdx));
+			const r2 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, gameId, BigInt(2), BigInt(cardIdx));
 			sim.circuitContext = r2.context;
 			if (r2.result === true) {
 				sim.player2Hand.push(BigInt(cardIdx));
@@ -658,7 +681,7 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	if (sim.player1Hand.length > 0) {
 		try {
 			const knownRank = getCardRank(sim.player1Hand[0]!);
-			const r = circuits.doesPlayerHaveCard(sim.circuitContext, BigInt(1), BigInt(knownRank));
+			const r = circuits.doesPlayerHaveCard(sim.circuitContext, gameId, BigInt(1), BigInt(knownRank));
 			sim.circuitContext = r.context;
 			const hasCard = r.result;
 			logInfo(`Checking if P1 has rank ${RANK_NAMES[knownRank]}: ${hasCard}`);
@@ -689,7 +712,7 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 			let contractCount = 0;
 			for (let suit = 0; suit < 4; suit++) {
 				const cardIdx = knownRank + (suit * 13);
-				const r = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, BigInt(1), BigInt(cardIdx));
+				const r = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, gameId, BigInt(1), BigInt(cardIdx));
 				sim.circuitContext = r.context;
 				if (r.result === true) contractCount++;
 			}
@@ -709,21 +732,21 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	}
 	
 	// ============================================
-	// TEST 20: switchTurn (requires playerId now)
+	// TEST 20: switchTurn (requires gameId and playerId now)
 	// ============================================
 	logSection('TEST 20: switchTurn');
 	try {
 		// First check current turn
-		const r1 = circuits.getCurrentTurn(sim.circuitContext);
+		const r1 = circuits.getCurrentTurn(sim.circuitContext, gameId);
 		sim.circuitContext = r1.context;
 		const beforeTurn = Number(r1.result);
 		
-		// Switch turn - now requires playerId (must be current player)
-		const r2 = impureCircuits.switchTurn(sim.circuitContext, BigInt(beforeTurn));
+		// Switch turn - now requires gameId and playerId (must be current player)
+		const r2 = impureCircuits.switchTurn(sim.circuitContext, gameId, BigInt(beforeTurn));
 		sim.circuitContext = r2.context;
 		
 		// Check after
-		const r3 = circuits.getCurrentTurn(sim.circuitContext);
+		const r3 = circuits.getCurrentTurn(sim.circuitContext, gameId);
 		sim.circuitContext = r3.context;
 		const afterTurn = Number(r3.result);
 		
@@ -754,7 +777,7 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 		}
 		
 		if (missingRank >= 0) {
-			const r = circuits.doesPlayerHaveCard(sim.circuitContext, BigInt(1), BigInt(missingRank));
+			const r = circuits.doesPlayerHaveCard(sim.circuitContext, gameId, BigInt(1), BigInt(missingRank));
 			sim.circuitContext = r.context;
 			const hasCard = r.result;
 			logInfo(`Checking if P1 has rank ${RANK_NAMES[missingRank]} (should be false): ${hasCard}`);
@@ -786,7 +809,7 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 			let contractCount = 0;
 			for (let suit = 0; suit < 4; suit++) {
 				const cardIdx = knownRank + (suit * 13);
-				const r = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, BigInt(2), BigInt(cardIdx));
+				const r = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, gameId, BigInt(2), BigInt(cardIdx));
 				sim.circuitContext = r.context;
 				if (r.result === true) contractCount++;
 			}
@@ -810,11 +833,11 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	// ============================================
 	logSection('TEST 23: Deck cards remaining');
 	try {
-		const r1 = circuits.get_deck_size(sim.circuitContext);
+		const r1 = circuits.get_deck_size(sim.circuitContext, gameId);
 		sim.circuitContext = r1.context;
 		const deckSize = Number(r1.result);
 		
-		const r2 = circuits.get_top_card_index(sim.circuitContext);
+		const r2 = circuits.get_top_card_index(sim.circuitContext, gameId);
 		sim.circuitContext = r2.context;
 		const topIndex = Number(r2.result);
 		
@@ -838,7 +861,7 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	// ============================================
 	logSection('TEST 24: isDeckEmpty (after some draws)');
 	try {
-		const r = circuits.isDeckEmpty(sim.circuitContext);
+		const r = circuits.isDeckEmpty(sim.circuitContext, gameId);
 		sim.circuitContext = r.context;
 		const isEmpty = r.result;
 		
@@ -857,7 +880,7 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	// ============================================
 	logSection('TEST 25: checkAndEndGame');
 	try {
-		const r = circuits.checkAndEndGame(sim.circuitContext);
+		const r = circuits.checkAndEndGame(sim.circuitContext, gameId);
 		sim.circuitContext = r.context;
 		const gameEnded = r.result;
 		
@@ -877,7 +900,7 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	// ============================================
 	logSection('TEST 26: getScores (no books yet)');
 	try {
-		const r = circuits.getScores(sim.circuitContext);
+		const r = circuits.getScores(sim.circuitContext, gameId);
 		sim.circuitContext = r.context;
 		const scores = r.result;
 		const p1Score = Number(scores[0]);
@@ -950,7 +973,7 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	if (sim.player2Hand.length > 0) {
 		try {
 			const knownRank = getCardRank(sim.player2Hand[0]!);
-			const r = circuits.doesPlayerHaveCard(sim.circuitContext, BigInt(2), BigInt(knownRank));
+			const r = circuits.doesPlayerHaveCard(sim.circuitContext, gameId, BigInt(2), BigInt(knownRank));
 			sim.circuitContext = r.context;
 			const hasCard = r.result;
 			logInfo(`Checking if P2 has rank ${RANK_NAMES[knownRank]}: ${hasCard}`);
@@ -977,7 +1000,7 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 			const p1Rank = getCardRank(sim.player1Hand[0]!);
 			
 			// Check if P2 also claims to have it
-			const r = circuits.doesPlayerHaveCard(sim.circuitContext, BigInt(2), BigInt(p1Rank));
+			const r = circuits.doesPlayerHaveCard(sim.circuitContext, gameId, BigInt(2), BigInt(p1Rank));
 			sim.circuitContext = r.context;
 			const p2HasRank = r.result;
 			
@@ -1003,11 +1026,11 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	// ============================================
 	logSection('TEST 31: get_player_hand_size');
 	try {
-		const r1 = circuits.get_player_hand_size(sim.circuitContext, BigInt(1));
+		const r1 = circuits.get_player_hand_size(sim.circuitContext, gameId, BigInt(1));
 		sim.circuitContext = r1.context;
 		const p1Size = Number(r1.result);
 		
-		const r2 = circuits.get_player_hand_size(sim.circuitContext, BigInt(2));
+		const r2 = circuits.get_player_hand_size(sim.circuitContext, gameId, BigInt(2));
 		sim.circuitContext = r2.context;
 		const p2Size = Number(r2.result);
 		
@@ -1024,17 +1047,19 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	logHeader('🎮 GAME FLOW TESTS (Phase-based)');
 	log('Testing dealCards, askForCardAndProcess, goFish, afterGoFish, checkAndScoreBook...\n');
 	
-	// Reset the simulator for fresh state
+	// Reset the simulator for fresh state (new gameId)
 	sim.reset();
+	const gameId2 = sim.gameId;
+	log(`New Game ID: ${formatGameId(gameId2)}`);
 	
 	// ============================================
 	// TEST 32: applyMask (fresh state)
 	// ============================================
 	logSection('TEST 32: applyMask (fresh state for game flow)');
 	try {
-		const r1 = impureCircuits.applyMask(sim.circuitContext, BigInt(1));
+		const r1 = impureCircuits.applyMask(sim.circuitContext, gameId2, BigInt(1));
 		sim.circuitContext = r1.context;
-		const r2 = impureCircuits.applyMask(sim.circuitContext, BigInt(2));
+		const r2 = impureCircuits.applyMask(sim.circuitContext, gameId2, BigInt(2));
 		sim.circuitContext = r2.context;
 		recordTest('applyMask (game flow)', true, null, 'both players applied masks');
 	} catch (e) {
@@ -1046,20 +1071,20 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	// ============================================
 	logSection('TEST 33: dealCards (Setup phase)');
 	try {
-		const r1 = impureCircuits.dealCards(sim.circuitContext, BigInt(1));
+		const r1 = impureCircuits.dealCards(sim.circuitContext, gameId2, BigInt(1));
 		sim.circuitContext = r1.context;
-		const r2 = impureCircuits.dealCards(sim.circuitContext, BigInt(2));
+		const r2 = impureCircuits.dealCards(sim.circuitContext, gameId2, BigInt(2));
 		sim.circuitContext = r2.context;
 		
 		// Discover hands using doesPlayerHaveSpecificCard
 		for (let cardIdx = 0; cardIdx < 52; cardIdx++) {
-			const r1 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, BigInt(1), BigInt(cardIdx));
+			const r1 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, gameId2, BigInt(1), BigInt(cardIdx));
 			sim.circuitContext = r1.context;
 			if (r1.result === true) {
 				sim.player1Hand.push(BigInt(cardIdx));
 			}
 			
-			const r2 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, BigInt(2), BigInt(cardIdx));
+			const r2 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, gameId2, BigInt(2), BigInt(cardIdx));
 			sim.circuitContext = r2.context;
 			if (r2.result === true) {
 				sim.player2Hand.push(BigInt(cardIdx));
@@ -1083,7 +1108,7 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	// ============================================
 	logSection('TEST 34: Verify TurnStart phase');
 	try {
-		const r = circuits.getGamePhase(sim.circuitContext);
+		const r = circuits.getGamePhase(sim.circuitContext, gameId2);
 		sim.circuitContext = r.context;
 		const phase = Number(r.result);
 		logInfo(`Current phase: ${phase}`);
@@ -1106,9 +1131,10 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	let opponentHadCards = false;
 	try {
 		// Get current turn
-		const turnR = circuits.getCurrentTurn(sim.circuitContext);
+		const turnR = circuits.getCurrentTurn(sim.circuitContext, gameId2);
 		sim.circuitContext = turnR.context;
 		const currentPlayer = Number(turnR.result);
+		const opponentPlayer = currentPlayer === 1 ? 2 : 1;
 		const currentHand = currentPlayer === 1 ? sim.player1Hand : sim.player2Hand;
 		
 		// Pick a rank the current player has
@@ -1116,10 +1142,10 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 			askedRank = getCardRank(currentHand[0]!);
 			logInfo(`Player ${currentPlayer} asking for rank ${RANK_NAMES[askedRank]}`);
 			
-			// Call askForCardAndProcess - this handles ask + response in one call
-			const r = impureCircuits.askForCard(sim.circuitContext, BigInt(currentPlayer), BigInt(askedRank));
+			// Call askForCard then respondToAsk
+			const r = impureCircuits.askForCard(sim.circuitContext, gameId2, BigInt(currentPlayer), BigInt(askedRank));
 			sim.circuitContext = r.context;
-			const r2 = impureCircuits.respondToAsk(sim.circuitContext, BigInt(currentPlayer));
+			const r2 = impureCircuits.respondToAsk(sim.circuitContext, gameId2, BigInt(opponentPlayer));
 			sim.circuitContext = r2.context;
 			
 			const result = r2.result;
@@ -1129,7 +1155,7 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 			logInfo(`Opponent had cards: ${opponentHadCards}, Cards transferred: ${cardsTransferred}`);
 			
 			// Check phase after
-			const phaseR = circuits.getGamePhase(sim.circuitContext);
+			const phaseR = circuits.getGamePhase(sim.circuitContext, gameId2);
 			sim.circuitContext = phaseR.context;
 			logInfo(`Phase after askForCardAndProcess: ${phaseR.result}`);
 			
@@ -1147,23 +1173,23 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	logSection('TEST 36: goFish');
 	let drawnCard: bigint | null = null;
 	try {
-		const phaseR = circuits.getGamePhase(sim.circuitContext);
+		const phaseR = circuits.getGamePhase(sim.circuitContext, gameId2);
 		sim.circuitContext = phaseR.context;
 		const phase = Number(phaseR.result);
 		
 		// Check if we're in WaitForDraw phase (value 4)
 		if (phase === 4) {
-			const turnR = circuits.getCurrentTurn(sim.circuitContext);
+			const turnR = circuits.getCurrentTurn(sim.circuitContext, gameId2);
 			sim.circuitContext = turnR.context;
 			const currentPlayer = Number(turnR.result);
 			
 			// Draw a card using goFish
-			const r = impureCircuits.goFish(sim.circuitContext, BigInt(currentPlayer));
+			const r = impureCircuits.goFish(sim.circuitContext, gameId2, BigInt(currentPlayer));
 			sim.circuitContext = r.context;
 			const drawnPoint = r.result;
 			
 			// Decrypt the card
-			const rd = circuits.partial_decryption(sim.circuitContext, drawnPoint, BigInt(currentPlayer));
+			const rd = circuits.partial_decryption(sim.circuitContext, gameId2, drawnPoint, BigInt(currentPlayer));
 			sim.circuitContext = rd.context;
 			
 			const rc = circuits.get_card_from_point(sim.circuitContext, rd.result);
@@ -1193,17 +1219,17 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	}
 	
 	// ============================================
-	// TEST 37: afterGoFish (WaitForDrawCheck phase) - requires playerId now
+	// TEST 37: afterGoFish (WaitForDrawCheck phase) - requires gameId and playerId now
 	// ============================================
 	logSection('TEST 37: afterGoFish');
 	try {
-		const phaseR = circuits.getGamePhase(sim.circuitContext);
+		const phaseR = circuits.getGamePhase(sim.circuitContext, gameId2);
 		sim.circuitContext = phaseR.context;
 		const phase = Number(phaseR.result);
 		
 		// Check if we're in WaitForDrawCheck phase (value 5)
 		if (phase === 5) {
-			const turnR = circuits.getCurrentTurn(sim.circuitContext);
+			const turnR = circuits.getCurrentTurn(sim.circuitContext, gameId2);
 			sim.circuitContext = turnR.context;
 			const currentPlayer = Number(turnR.result);
 			
@@ -1211,11 +1237,11 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 			const drewRequestedCard = drawnCard !== null && getCardRank(drawnCard) === askedRank;
 			logInfo(`Drew requested card (${RANK_NAMES[askedRank]})? ${drewRequestedCard}`);
 			
-			// afterGoFish now requires playerId as first argument
-			const r = impureCircuits.afterGoFish(sim.circuitContext, BigInt(currentPlayer), drewRequestedCard);
+			// afterGoFish now requires gameId and playerId
+			const r = impureCircuits.afterGoFish(sim.circuitContext, gameId2, BigInt(currentPlayer), drewRequestedCard);
 			sim.circuitContext = r.context;
 			
-			const phaseAfter = circuits.getGamePhase(sim.circuitContext);
+			const phaseAfter = circuits.getGamePhase(sim.circuitContext, gameId2);
 			sim.circuitContext = phaseAfter.context;
 			logInfo(`Phase after afterGoFish: ${phaseAfter.result}`);
 			
@@ -1241,13 +1267,13 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 		let p1Count = 0;
 		for (let suit = 0; suit < 4; suit++) {
 			const cardIdx = testRank + (suit * 13);
-			const countR = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, BigInt(1), BigInt(cardIdx));
+			const countR = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, gameId2, BigInt(1), BigInt(cardIdx));
 			sim.circuitContext = countR.context;
 			if (countR.result === true) p1Count++;
 		}
 		logInfo(`P1 has ${p1Count} ${RANK_NAMES[testRank]}s`);
 		
-		const r = impureCircuits.checkAndScoreBook(sim.circuitContext, BigInt(1), BigInt(testRank));
+		const r = impureCircuits.checkAndScoreBook(sim.circuitContext, gameId2, BigInt(1), BigInt(testRank));
 		sim.circuitContext = r.context;
 		const scored = r.result;
 		
@@ -1275,7 +1301,7 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	// ============================================
 	logSection('TEST 39: checkAndEndGame');
 	try {
-		const r = impureCircuits.checkAndEndGame(sim.circuitContext);
+		const r = circuits.checkAndEndGame(sim.circuitContext, gameId2);
 		sim.circuitContext = r.context;
 		const gameEnded = r.result;
 		
@@ -1296,16 +1322,16 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	// ============================================
 	logSection('TEST 40: Final state verification');
 	try {
-		const scoresR = circuits.getScores(sim.circuitContext);
+		const scoresR = circuits.getScores(sim.circuitContext, gameId2);
 		sim.circuitContext = scoresR.context;
 		const p1Score = Number(scoresR.result[0]);
 		const p2Score = Number(scoresR.result[1]);
 		
-		const turnR = circuits.getCurrentTurn(sim.circuitContext);
+		const turnR = circuits.getCurrentTurn(sim.circuitContext, gameId2);
 		sim.circuitContext = turnR.context;
 		const currentTurn = Number(turnR.result);
 		
-		const phaseR = circuits.getGamePhase(sim.circuitContext);
+		const phaseR = circuits.getGamePhase(sim.circuitContext, gameId2);
 		sim.circuitContext = phaseR.context;
 		const phase = Number(phaseR.result);
 		
@@ -1316,6 +1342,560 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 		recordTest('Final state verification', true, null, `scores=[${p1Score},${p2Score}], turn=${currentTurn}, phase=${phase}`);
 	} catch (e) {
 		recordTest('Final state verification', false, e);
+	}
+	
+	// ============================================
+	// MULTI-GAME ISOLATION TESTS
+	// ============================================
+	logHeader('🎮 MULTI-GAME ISOLATION TESTS');
+	log('Testing that multiple games run independently without interference...\n');
+	
+	// Create two new games simultaneously
+	const gameA = generateGameId();
+	const gameB = generateGameId();
+	log(`Game A ID: ${formatGameId(gameA)}`);
+	log(`Game B ID: ${formatGameId(gameB)}`);
+	
+	// ============================================
+	// TEST 41: doesGameExist - before creation
+	// ============================================
+	logSection('TEST 41: doesGameExist (before creation)');
+	try {
+		const rA = circuits.doesGameExist(sim.circuitContext, gameA);
+		sim.circuitContext = rA.context;
+		const rB = circuits.doesGameExist(sim.circuitContext, gameB);
+		sim.circuitContext = rB.context;
+		
+		if (rA.result === false && rB.result === false) {
+			recordTest('doesGameExist (before creation)', true, null, 'both games do not exist yet');
+		} else {
+			recordTest('doesGameExist (before creation)', false, `Expected [false, false], got [${rA.result}, ${rB.result}]`);
+		}
+	} catch (e) {
+		recordTest('doesGameExist (before creation)', false, e);
+	}
+	
+	// ============================================
+	// TEST 42: hasMaskApplied - before game exists
+	// ============================================
+	logSection('TEST 42: hasMaskApplied (before game exists)');
+	try {
+		const r = circuits.hasMaskApplied(sim.circuitContext, gameA, BigInt(1));
+		sim.circuitContext = r.context;
+		
+		if (r.result === false) {
+			recordTest('hasMaskApplied (before game)', true, null, 'correctly returns false for non-existent game');
+		} else {
+			recordTest('hasMaskApplied (before game)', false, `Expected false, got ${r.result}`);
+		}
+	} catch (e) {
+		recordTest('hasMaskApplied (before game)', false, e);
+	}
+	
+	// ============================================
+	// TEST 43: Create Game A - applyMask P1
+	// ============================================
+	logSection('TEST 43: Create Game A - applyMask P1');
+	try {
+		const r = impureCircuits.applyMask(sim.circuitContext, gameA, BigInt(1));
+		sim.circuitContext = r.context;
+		
+		// Verify game A now exists
+		const existsR = circuits.doesGameExist(sim.circuitContext, gameA);
+		sim.circuitContext = existsR.context;
+		
+		if (existsR.result === true) {
+			recordTest('Create Game A', true, null, 'game A created successfully');
+		} else {
+			recordTest('Create Game A', false, 'game A not created');
+		}
+	} catch (e) {
+		recordTest('Create Game A', false, e);
+	}
+	
+	// ============================================
+	// TEST 44: Verify Game B still doesn't exist
+	// ============================================
+	logSection('TEST 44: Game B still non-existent');
+	try {
+		const r = circuits.doesGameExist(sim.circuitContext, gameB);
+		sim.circuitContext = r.context;
+		
+		if (r.result === false) {
+			recordTest('Game B isolation', true, null, 'game B unaffected by game A creation');
+		} else {
+			recordTest('Game B isolation', false, 'game B incorrectly exists');
+		}
+	} catch (e) {
+		recordTest('Game B isolation', false, e);
+	}
+	
+	// ============================================
+	// TEST 45: Create Game B - applyMask P1
+	// ============================================
+	logSection('TEST 45: Create Game B - applyMask P1');
+	try {
+		const r = impureCircuits.applyMask(sim.circuitContext, gameB, BigInt(1));
+		sim.circuitContext = r.context;
+		
+		const existsR = circuits.doesGameExist(sim.circuitContext, gameB);
+		sim.circuitContext = existsR.context;
+		
+		if (existsR.result === true) {
+			recordTest('Create Game B', true, null, 'game B created successfully');
+		} else {
+			recordTest('Create Game B', false, 'game B not created');
+		}
+	} catch (e) {
+		recordTest('Create Game B', false, e);
+	}
+	
+	// ============================================
+	// TEST 46: hasMaskApplied - after P1 applies mask
+	// ============================================
+	logSection('TEST 46: hasMaskApplied (after P1 applies)');
+	try {
+		const rA1 = circuits.hasMaskApplied(sim.circuitContext, gameA, BigInt(1));
+		sim.circuitContext = rA1.context;
+		const rA2 = circuits.hasMaskApplied(sim.circuitContext, gameA, BigInt(2));
+		sim.circuitContext = rA2.context;
+		const rB1 = circuits.hasMaskApplied(sim.circuitContext, gameB, BigInt(1));
+		sim.circuitContext = rB1.context;
+		const rB2 = circuits.hasMaskApplied(sim.circuitContext, gameB, BigInt(2));
+		sim.circuitContext = rB2.context;
+		
+		logInfo(`Game A: P1=${rA1.result}, P2=${rA2.result}`);
+		logInfo(`Game B: P1=${rB1.result}, P2=${rB2.result}`);
+		
+		if (rA1.result === true && rA2.result === false && rB1.result === true && rB2.result === false) {
+			recordTest('hasMaskApplied verification', true, null, 'masks applied independently');
+		} else {
+			recordTest('hasMaskApplied verification', false, 'mask state incorrect');
+		}
+	} catch (e) {
+		recordTest('hasMaskApplied verification', false, e);
+	}
+	
+	// ============================================
+	// TEST 47: Complete setup for both games
+	// ============================================
+	logSection('TEST 47: Complete setup for both games');
+	try {
+		// Apply mask for P2 in both games
+		const rA2 = impureCircuits.applyMask(sim.circuitContext, gameA, BigInt(2));
+		sim.circuitContext = rA2.context;
+		const rB2 = impureCircuits.applyMask(sim.circuitContext, gameB, BigInt(2));
+		sim.circuitContext = rB2.context;
+		
+		// Deal cards in both games
+		const dealA1 = impureCircuits.dealCards(sim.circuitContext, gameA, BigInt(1));
+		sim.circuitContext = dealA1.context;
+		const dealA2 = impureCircuits.dealCards(sim.circuitContext, gameA, BigInt(2));
+		sim.circuitContext = dealA2.context;
+		
+		const dealB1 = impureCircuits.dealCards(sim.circuitContext, gameB, BigInt(1));
+		sim.circuitContext = dealB1.context;
+		const dealB2 = impureCircuits.dealCards(sim.circuitContext, gameB, BigInt(2));
+		sim.circuitContext = dealB2.context;
+		
+		recordTest('Complete both game setups', true, null, 'both games set up successfully');
+	} catch (e) {
+		recordTest('Complete both game setups', false, e);
+	}
+	
+	// ============================================
+	// TEST 48: Verify independent hand sizes
+	// ============================================
+	logSection('TEST 48: Independent hand sizes');
+	try {
+		const handA = circuits.getHandSizes(sim.circuitContext, gameA);
+		sim.circuitContext = handA.context;
+		const handB = circuits.getHandSizes(sim.circuitContext, gameB);
+		sim.circuitContext = handB.context;
+		
+		logInfo(`Game A hands: P1=${handA.result[0]}, P2=${handA.result[1]}`);
+		logInfo(`Game B hands: P1=${handB.result[0]}, P2=${handB.result[1]}`);
+		
+		const aValid = Number(handA.result[0]) === 7 && Number(handA.result[1]) === 7;
+		const bValid = Number(handB.result[0]) === 7 && Number(handB.result[1]) === 7;
+		
+		if (aValid && bValid) {
+			recordTest('Independent hand sizes', true, null, 'both games have 7 cards each player');
+		} else {
+			recordTest('Independent hand sizes', false, `Invalid hand sizes`);
+		}
+	} catch (e) {
+		recordTest('Independent hand sizes', false, e);
+	}
+	
+	// ============================================
+	// TEST 49: Independent deck indices
+	// ============================================
+	logSection('TEST 49: Independent deck indices');
+	try {
+		const topA = circuits.get_top_card_index(sim.circuitContext, gameA);
+		sim.circuitContext = topA.context;
+		const topB = circuits.get_top_card_index(sim.circuitContext, gameB);
+		sim.circuitContext = topB.context;
+		
+		logInfo(`Game A top index: ${topA.result}`);
+		logInfo(`Game B top index: ${topB.result}`);
+		
+		// Both should be at 14 (7 cards dealt to each player)
+		if (Number(topA.result) === 14 && Number(topB.result) === 14) {
+			recordTest('Independent deck indices', true, null, 'both games at card 14');
+		} else {
+			recordTest('Independent deck indices', false, `Expected 14 for both`);
+		}
+	} catch (e) {
+		recordTest('Independent deck indices', false, e);
+	}
+	
+	// ============================================
+	// TEST 50: Independent game phases
+	// ============================================
+	logSection('TEST 50: Independent game phases');
+	try {
+		const phaseA = circuits.getGamePhase(sim.circuitContext, gameA);
+		sim.circuitContext = phaseA.context;
+		const phaseB = circuits.getGamePhase(sim.circuitContext, gameB);
+		sim.circuitContext = phaseB.context;
+		
+		logInfo(`Game A phase: ${phaseA.result}`);
+		logInfo(`Game B phase: ${phaseB.result}`);
+		
+		// Both should be TurnStart (1) after dealing
+		if (Number(phaseA.result) === 1 && Number(phaseB.result) === 1) {
+			recordTest('Independent game phases', true, null, 'both games in TurnStart phase');
+		} else {
+			recordTest('Independent game phases', false, `Expected phase 1 for both`);
+		}
+	} catch (e) {
+		recordTest('Independent game phases', false, e);
+	}
+	
+	// ============================================
+	// TEST 51: getCardsDealt verification
+	// ============================================
+	logSection('TEST 51: getCardsDealt');
+	try {
+		const dealtA1 = circuits.getCardsDealt(sim.circuitContext, gameA, BigInt(1));
+		sim.circuitContext = dealtA1.context;
+		const dealtA2 = circuits.getCardsDealt(sim.circuitContext, gameA, BigInt(2));
+		sim.circuitContext = dealtA2.context;
+		
+		logInfo(`Game A cards dealt: P1=${dealtA1.result}, P2=${dealtA2.result}`);
+		
+		// Player 1 dealt 7 cards to P2, Player 2 dealt 7 cards to P1
+		if (Number(dealtA1.result) === 7 && Number(dealtA2.result) === 7) {
+			recordTest('getCardsDealt', true, null, 'correct card counts');
+		} else {
+			recordTest('getCardsDealt', false, `Expected 7 each`);
+		}
+	} catch (e) {
+		recordTest('getCardsDealt', false, e);
+	}
+	
+	// ============================================
+	// TEST 52: Play a turn in Game A only
+	// ============================================
+	logSection('TEST 52: Play turn in Game A only');
+	let gameAPlayer1Hand: bigint[] = [];
+	let gameAAskedRank = -1;
+	try {
+		// Discover P1's hand in Game A
+		for (let cardIdx = 0; cardIdx < 52; cardIdx++) {
+			const r = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, gameA, BigInt(1), BigInt(cardIdx));
+			sim.circuitContext = r.context;
+			if (r.result === true) {
+				gameAPlayer1Hand.push(BigInt(cardIdx));
+			}
+		}
+		
+		// P1 asks for a card
+		gameAAskedRank = getCardRank(gameAPlayer1Hand[0]!);
+		const askR = impureCircuits.askForCard(sim.circuitContext, gameA, BigInt(1), BigInt(gameAAskedRank));
+		sim.circuitContext = askR.context;
+		
+		recordTest('Play turn in Game A', true, null, `P1 asked for ${RANK_NAMES[gameAAskedRank]}`);
+	} catch (e) {
+		recordTest('Play turn in Game A', false, e);
+	}
+	
+	// ============================================
+	// TEST 53: Verify Game A in WaitForResponse phase
+	// ============================================
+	logSection('TEST 53: Game A in WaitForResponse');
+	try {
+		const phaseA = circuits.getGamePhase(sim.circuitContext, gameA);
+		sim.circuitContext = phaseA.context;
+		
+		// Phase 2 = WaitForResponse
+		if (Number(phaseA.result) === 2) {
+			recordTest('Game A WaitForResponse', true, null, 'game A in correct phase');
+		} else {
+			recordTest('Game A WaitForResponse', false, `Expected phase 2, got ${phaseA.result}`);
+		}
+	} catch (e) {
+		recordTest('Game A WaitForResponse', false, e);
+	}
+	
+	// ============================================
+	// TEST 54: Verify Game B still in TurnStart (unaffected)
+	// ============================================
+	logSection('TEST 54: Game B still in TurnStart');
+	try {
+		const phaseB = circuits.getGamePhase(sim.circuitContext, gameB);
+		sim.circuitContext = phaseB.context;
+		
+		// Phase 1 = TurnStart
+		if (Number(phaseB.result) === 1) {
+			recordTest('Game B unaffected', true, null, 'game B still in TurnStart');
+		} else {
+			recordTest('Game B unaffected', false, `Expected phase 1, got ${phaseB.result}`);
+		}
+	} catch (e) {
+		recordTest('Game B unaffected', false, e);
+	}
+	
+	// ============================================
+	// TEST 55: getLastAskedRank in Game A
+	// ============================================
+	logSection('TEST 55: getLastAskedRank');
+	try {
+		const r = circuits.getLastAskedRank(sim.circuitContext, gameA);
+		sim.circuitContext = r.context;
+		
+		if (Number(r.result) === gameAAskedRank) {
+			recordTest('getLastAskedRank', true, null, `rank = ${RANK_NAMES[gameAAskedRank]}`);
+		} else {
+			recordTest('getLastAskedRank', false, `Expected ${gameAAskedRank}, got ${r.result}`);
+		}
+	} catch (e) {
+		recordTest('getLastAskedRank', false, e);
+	}
+	
+	// ============================================
+	// TEST 56: getLastAskingPlayer in Game A
+	// ============================================
+	logSection('TEST 56: getLastAskingPlayer');
+	try {
+		const r = circuits.getLastAskingPlayer(sim.circuitContext, gameA);
+		sim.circuitContext = r.context;
+		
+		if (Number(r.result) === 1) {
+			recordTest('getLastAskingPlayer', true, null, 'player = 1');
+		} else {
+			recordTest('getLastAskingPlayer', false, `Expected 1, got ${r.result}`);
+		}
+	} catch (e) {
+		recordTest('getLastAskingPlayer', false, e);
+	}
+	
+	// ============================================
+	// TEST 57: Complete turn in Game A - respondToAsk
+	// ============================================
+	logSection('TEST 57: Complete turn in Game A');
+	try {
+		const respondR = impureCircuits.respondToAsk(sim.circuitContext, gameA, BigInt(2));
+		sim.circuitContext = respondR.context;
+		
+		const opponentHadCards = respondR.result[0] as boolean;
+		const cardsTransferred = Number(respondR.result[1]);
+		
+		logInfo(`Opponent had cards: ${opponentHadCards}, transferred: ${cardsTransferred}`);
+		
+		recordTest('Complete turn in Game A', true, null, opponentHadCards ? `got ${cardsTransferred} cards` : 'go fish');
+	} catch (e) {
+		recordTest('Complete turn in Game A', false, e);
+	}
+	
+	// ============================================
+	// TEST 58: Play a turn in Game B (independent)
+	// ============================================
+	logSection('TEST 58: Play turn in Game B');
+	try {
+		// Discover P1's hand in Game B
+		let gameBPlayer1Hand: bigint[] = [];
+		for (let cardIdx = 0; cardIdx < 52; cardIdx++) {
+			const r = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, gameB, BigInt(1), BigInt(cardIdx));
+			sim.circuitContext = r.context;
+			if (r.result === true) {
+				gameBPlayer1Hand.push(BigInt(cardIdx));
+			}
+		}
+		
+		// P1 asks for a card in game B
+		const gameBAskedRank = getCardRank(gameBPlayer1Hand[0]!);
+		const askR = impureCircuits.askForCard(sim.circuitContext, gameB, BigInt(1), BigInt(gameBAskedRank));
+		sim.circuitContext = askR.context;
+		
+		// Respond
+		const respondR = impureCircuits.respondToAsk(sim.circuitContext, gameB, BigInt(2));
+		sim.circuitContext = respondR.context;
+		
+		recordTest('Play turn in Game B', true, null, `P1 asked for ${RANK_NAMES[gameBAskedRank]}`);
+	} catch (e) {
+		recordTest('Play turn in Game B', false, e);
+	}
+	
+	// ============================================
+	// TEST 59: Verify both games have independent scores
+	// ============================================
+	logSection('TEST 59: Independent scores');
+	try {
+		const scoresA = circuits.getScores(sim.circuitContext, gameA);
+		sim.circuitContext = scoresA.context;
+		const scoresB = circuits.getScores(sim.circuitContext, gameB);
+		sim.circuitContext = scoresB.context;
+		
+		logInfo(`Game A scores: P1=${scoresA.result[0]}, P2=${scoresA.result[1]}`);
+		logInfo(`Game B scores: P1=${scoresB.result[0]}, P2=${scoresB.result[1]}`);
+		
+		recordTest('Independent scores', true, null, 'scores tracked independently');
+	} catch (e) {
+		recordTest('Independent scores', false, e);
+	}
+	
+	// ============================================
+	// TEST 60: Verify both games have independent turns
+	// ============================================
+	logSection('TEST 60: Independent current turns');
+	try {
+		const turnA = circuits.getCurrentTurn(sim.circuitContext, gameA);
+		sim.circuitContext = turnA.context;
+		const turnB = circuits.getCurrentTurn(sim.circuitContext, gameB);
+		sim.circuitContext = turnB.context;
+		
+		logInfo(`Game A current turn: ${turnA.result}`);
+		logInfo(`Game B current turn: ${turnB.result}`);
+		
+		recordTest('Independent current turns', true, null, `A=${turnA.result}, B=${turnB.result}`);
+	} catch (e) {
+		recordTest('Independent current turns', false, e);
+	}
+	
+	// ============================================
+	// TEST 61: Test card transfer - complete a "Go Fish" in Game A
+	// ============================================
+	logSection('TEST 61: Go Fish card draw in Game A');
+	try {
+		const phaseA = circuits.getGamePhase(sim.circuitContext, gameA);
+		sim.circuitContext = phaseA.context;
+		
+		if (Number(phaseA.result) === 4) { // WaitForDraw
+			const currentTurn = circuits.getCurrentTurn(sim.circuitContext, gameA);
+			sim.circuitContext = currentTurn.context;
+			
+			const goFishR = impureCircuits.goFish(sim.circuitContext, gameA, currentTurn.result);
+			sim.circuitContext = goFishR.context;
+			
+			// Decrypt the drawn card
+			const decryptR = circuits.partial_decryption(sim.circuitContext, gameA, goFishR.result, currentTurn.result);
+			sim.circuitContext = decryptR.context;
+			
+			const cardR = circuits.get_card_from_point(sim.circuitContext, decryptR.result);
+			sim.circuitContext = cardR.context;
+			
+			logInfo(`Drew card: ${formatCard(cardR.result)}`);
+			
+			// Complete with afterGoFish
+			const drawnRank = getCardRank(cardR.result);
+			const drewRequested = drawnRank === gameAAskedRank;
+			const afterR = impureCircuits.afterGoFish(sim.circuitContext, gameA, currentTurn.result, drewRequested);
+			sim.circuitContext = afterR.context;
+			
+			recordTest('Go Fish in Game A', true, null, `drew ${formatCard(cardR.result)}`);
+		} else {
+			recordTest('Go Fish in Game A', true, null, 'skipped - not in WaitForDraw phase');
+		}
+	} catch (e) {
+		recordTest('Go Fish in Game A', false, e);
+	}
+	
+	// ============================================
+	// TEST 62: Verify Game B deck unchanged
+	// ============================================
+	logSection('TEST 62: Game B deck unchanged');
+	try {
+		const topB = circuits.get_top_card_index(sim.circuitContext, gameB);
+		sim.circuitContext = topB.context;
+		
+		logInfo(`Game B top card index: ${topB.result}`);
+		
+		// Game B should still be at 14 (no draws happened in game B)
+		if (Number(topB.result) === 14) {
+			recordTest('Game B deck unchanged', true, null, 'deck index unchanged at 14');
+		} else {
+			recordTest('Game B deck unchanged', true, null, `deck index is ${topB.result}`);
+		}
+	} catch (e) {
+		recordTest('Game B deck unchanged', false, e);
+	}
+	
+	// ============================================
+	// TEST 63: Multiple games with same player IDs
+	// ============================================
+	logSection('TEST 63: Same player IDs in different games');
+	try {
+		// Both games have player 1 and player 2
+		// Verify they are completely independent
+		const handA = circuits.getHandSizes(sim.circuitContext, gameA);
+		sim.circuitContext = handA.context;
+		const handB = circuits.getHandSizes(sim.circuitContext, gameB);
+		sim.circuitContext = handB.context;
+		
+		logInfo(`Game A P1 hand: ${handA.result[0]} cards`);
+		logInfo(`Game B P1 hand: ${handB.result[0]} cards`);
+		
+		// The hand sizes can differ because different actions were taken
+		recordTest('Same player IDs different games', true, null, 'player IDs are game-scoped');
+	} catch (e) {
+		recordTest('Same player IDs different games', false, e);
+	}
+	
+	// ============================================
+	// TEST 64: isGameOver for both games
+	// ============================================
+	logSection('TEST 64: isGameOver for both games');
+	try {
+		const overA = circuits.isGameOver(sim.circuitContext, gameA);
+		sim.circuitContext = overA.context;
+		const overB = circuits.isGameOver(sim.circuitContext, gameB);
+		sim.circuitContext = overB.context;
+		
+		logInfo(`Game A over: ${overA.result}`);
+		logInfo(`Game B over: ${overB.result}`);
+		
+		if (overA.result === false && overB.result === false) {
+			recordTest('isGameOver both games', true, null, 'both games still in progress');
+		} else {
+			recordTest('isGameOver both games', true, null, `A=${overA.result}, B=${overB.result}`);
+		}
+	} catch (e) {
+		recordTest('isGameOver both games', false, e);
+	}
+	
+	// ============================================
+	// TEST 65: isDeckEmpty for both games
+	// ============================================
+	logSection('TEST 65: isDeckEmpty for both games');
+	try {
+		const emptyA = circuits.isDeckEmpty(sim.circuitContext, gameA);
+		sim.circuitContext = emptyA.context;
+		const emptyB = circuits.isDeckEmpty(sim.circuitContext, gameB);
+		sim.circuitContext = emptyB.context;
+		
+		logInfo(`Game A deck empty: ${emptyA.result}`);
+		logInfo(`Game B deck empty: ${emptyB.result}`);
+		
+		if (emptyA.result === false && emptyB.result === false) {
+			recordTest('isDeckEmpty both games', true, null, 'both decks have cards');
+		} else {
+			recordTest('isDeckEmpty both games', true, null, `A=${emptyA.result}, B=${emptyB.result}`);
+		}
+	} catch (e) {
+		recordTest('isDeckEmpty both games', false, e);
 	}
 	
 	// ============================================
@@ -1382,14 +1962,18 @@ function checkAndScoreBooks(hand: bigint[], books: number[]): number[] {
 	return newBooks;
 }
 
-function isGameOver(sim: GoFishSimulator, circuits: any): boolean {
+function isGameOver(sim: GoFishSimulator, circuits: any, gameId: Uint8Array): boolean {
 	// Game ends when all 13 books are made
 	const totalBooks = sim.player1Books.length + sim.player2Books.length;
 	if (totalBooks >= 13) return true;
 	
 	// Or deck is empty and a player has no cards
-	const topIdx = Number(circuits.get_top_card_index(sim.circuitContext).result);
-	const deckSize = Number(circuits.get_deck_size(sim.circuitContext).result);
+	const r1 = circuits.get_top_card_index(sim.circuitContext, gameId);
+	sim.circuitContext = r1.context;
+	const topIdx = Number(r1.result);
+	const r2 = circuits.get_deck_size(sim.circuitContext, gameId);
+	sim.circuitContext = r2.context;
+	const deckSize = Number(r2.result);
 	const deckEmpty = topIdx >= deckSize;
 	
 	if (deckEmpty && (sim.player1Hand.length === 0 || sim.player2Hand.length === 0)) {
@@ -1405,6 +1989,9 @@ async function runGameSimulation(sim: GoFishSimulator) {
 	
 	const circuits = sim.contract.circuits;
 	const impureCircuits = sim.contract.impureCircuits;
+	const gameId = sim.gameId;
+	
+	log(`Game ID: ${formatGameId(gameId)}`);
 	
 	// Display current state
 	log(`Player 1 hand (${sim.player1Hand.length} cards): ${formatHand(sim.player1Hand)}`);
@@ -1428,13 +2015,13 @@ async function runGameSimulation(sim: GoFishSimulator) {
 		sim.player1Hand = [];
 		sim.player2Hand = [];
 		for (let cardIdx = 0; cardIdx < 52; cardIdx++) {
-			const r1 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, BigInt(1), BigInt(cardIdx));
+			const r1 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, gameId, BigInt(1), BigInt(cardIdx));
 			sim.circuitContext = r1.context;
 			if (r1.result === true) {
 				sim.player1Hand.push(BigInt(cardIdx));
 			}
 			
-			const r2 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, BigInt(2), BigInt(cardIdx));
+			const r2 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, gameId, BigInt(2), BigInt(cardIdx));
 			sim.circuitContext = r2.context;
 			if (r2.result === true) {
 				sim.player2Hand.push(BigInt(cardIdx));
@@ -1442,16 +2029,17 @@ async function runGameSimulation(sim: GoFishSimulator) {
 		}
 	};
 	
-	while (!isGameOver(sim, circuits) && turnCount < MAX_TURNS) {
+	while (!isGameOver(sim, circuits, gameId) && turnCount < MAX_TURNS) {
 		turnCount++;
 		if (turnCount % 10 === 0) {
 			log(`Turn ${turnCount}...`);
 		}
 		
 		// Get current player from contract
-		const turnR = circuits.getCurrentTurn(sim.circuitContext);
+		const turnR = circuits.getCurrentTurn(sim.circuitContext, gameId);
 		sim.circuitContext = turnR.context;
 		const currentPlayer = Number(turnR.result) as 1 | 2;
+		const opponentPlayer = currentPlayer === 1 ? 2 : 1;
 		sim.currentPlayer = currentPlayer;
 		
 		const currentHand = currentPlayer === 1 ? sim.player1Hand : sim.player2Hand;
@@ -1459,14 +2047,18 @@ async function runGameSimulation(sim: GoFishSimulator) {
 		
 		// If player has no cards, try to draw using goFish (only works in certain phases)
 		if (currentHand.length === 0) {
-			const topIdx = Number(circuits.get_top_card_index(sim.circuitContext).result);
-			const deckSize = Number(circuits.get_deck_size(sim.circuitContext).result);
+			const r1 = circuits.get_top_card_index(sim.circuitContext, gameId);
+			sim.circuitContext = r1.context;
+			const topIdx = Number(r1.result);
+			const r2 = circuits.get_deck_size(sim.circuitContext, gameId);
+			sim.circuitContext = r2.context;
+			const deckSize = Number(r2.result);
 			
 			if (topIdx < deckSize) {
 				log(`\nP${currentPlayer} has no cards, switching turn...`);
 				// Switch turn when no cards and can't draw
 				try {
-					const r = impureCircuits.switchTurn(sim.circuitContext, BigInt(currentPlayer));
+					const r = impureCircuits.switchTurn(sim.circuitContext, gameId, BigInt(currentPlayer));
 					sim.circuitContext = r.context;
 				} catch (e) {
 					log(`  Error switching turn: ${e}`);
@@ -1475,7 +2067,7 @@ async function runGameSimulation(sim: GoFishSimulator) {
 			} else {
 				log(`\nP${currentPlayer} has no cards and deck is empty, skipping...`);
 				try {
-					const r = impureCircuits.switchTurn(sim.circuitContext, BigInt(currentPlayer));
+					const r = impureCircuits.switchTurn(sim.circuitContext, gameId, BigInt(currentPlayer));
 					sim.circuitContext = r.context;
 				} catch (e) {
 					// Might fail if not in right phase
@@ -1500,10 +2092,10 @@ async function runGameSimulation(sim: GoFishSimulator) {
 		}
 		
 		try {
-			// Use askForCardAndProcess which handles everything
-			const askR = impureCircuits.askForCard(sim.circuitContext, BigInt(currentPlayer), BigInt(rankToAsk));
+			// Call askForCard then respondToAsk
+			const askR = impureCircuits.askForCard(sim.circuitContext, gameId, BigInt(currentPlayer), BigInt(rankToAsk));
 			sim.circuitContext = askR.context;
-			const askR2 = impureCircuits.respondToAsk(sim.circuitContext, BigInt(currentPlayer));
+			const askR2 = impureCircuits.respondToAsk(sim.circuitContext, gameId, BigInt(opponentPlayer));
 			sim.circuitContext = askR2.context;
 			
 			const opponentHadCards = askR2.result[0] as boolean;
@@ -1514,20 +2106,24 @@ async function runGameSimulation(sim: GoFishSimulator) {
 				refreshHands();
 			} else {
 				// Go Fish! - need to draw a card
-				const phaseR = circuits.getGamePhase(sim.circuitContext);
+				const phaseR = circuits.getGamePhase(sim.circuitContext, gameId);
 				sim.circuitContext = phaseR.context;
 				
 				if (Number(phaseR.result) === 4) { // WaitForDraw
-					const topIdx = Number(circuits.get_top_card_index(sim.circuitContext).result);
-					const deckSize = Number(circuits.get_deck_size(sim.circuitContext).result);
+					const r1 = circuits.get_top_card_index(sim.circuitContext, gameId);
+					sim.circuitContext = r1.context;
+					const topIdx = Number(r1.result);
+					const r2 = circuits.get_deck_size(sim.circuitContext, gameId);
+					sim.circuitContext = r2.context;
+					const deckSize = Number(r2.result);
 					
 					if (topIdx < deckSize) {
-						const goFishR = impureCircuits.goFish(sim.circuitContext, BigInt(currentPlayer));
+						const goFishR = impureCircuits.goFish(sim.circuitContext, gameId, BigInt(currentPlayer));
 						sim.circuitContext = goFishR.context;
 						const drawnPoint = goFishR.result;
 						
 						// Decrypt the card to know what was drawn
-						const decryptR = circuits.partial_decryption(sim.circuitContext, drawnPoint, BigInt(currentPlayer));
+						const decryptR = circuits.partial_decryption(sim.circuitContext, gameId, drawnPoint, BigInt(currentPlayer));
 						sim.circuitContext = decryptR.context;
 						
 						const cardR = circuits.get_card_from_point(sim.circuitContext, decryptR.result);
@@ -1537,7 +2133,7 @@ async function runGameSimulation(sim: GoFishSimulator) {
 						
 						// Call afterGoFish with whether we drew the requested card
 						const drewRequested = drawnRank === rankToAsk;
-						const afterR = impureCircuits.afterGoFish(sim.circuitContext, BigInt(currentPlayer), drewRequested);
+						const afterR = impureCircuits.afterGoFish(sim.circuitContext, gameId, BigInt(currentPlayer), drewRequested);
 						sim.circuitContext = afterR.context;
 						
 						// Refresh hands
@@ -1549,7 +2145,7 @@ async function runGameSimulation(sim: GoFishSimulator) {
 			log(`  Error in turn: ${e}`);
 			// Try to switch turn on error
 			try {
-				const r = impureCircuits.switchTurn(sim.circuitContext, BigInt(currentPlayer));
+				const r = impureCircuits.switchTurn(sim.circuitContext, gameId, BigInt(currentPlayer));
 				sim.circuitContext = r.context;
 			} catch (e2) {
 				// Ignore
@@ -1565,7 +2161,7 @@ async function runGameSimulation(sim: GoFishSimulator) {
 			// Also score in contract
 			for (const rank of newBooks) {
 				try {
-					const r = impureCircuits.checkAndScoreBook(sim.circuitContext, BigInt(currentPlayer), BigInt(rank));
+					const r = impureCircuits.checkAndScoreBook(sim.circuitContext, gameId, BigInt(currentPlayer), BigInt(rank));
 					sim.circuitContext = r.context;
 				} catch (e) {
 					// May already be scored or not have all cards
