@@ -294,7 +294,11 @@ module Deck {
         const sorted_hashes = map((c) => hash_card_to_field(c), sorted_cards);
 
         // Generate random challenge 'gamma' (Fiat-Shamir)
-        const gamma = std_transientHash<Vector<52, Field>>(original_hashes);
+        const h1 = std_transientHash<Vector<52, Field>>(original_hashes);
+        const h2 = std_transientHash<Vector<52, Field>>(sorted_hashes);
+        const gamma = std_transientHash<Vector<2, Field>>([h1, h2]);
+
+        // const gamma = std_transientHash<Vector<52, Field>>(original_hashes);
 
         // Compute Grand Products
         const prod_original = fold((acc, h) => acc * (h + gamma), 1 as Field, original_hashes);
