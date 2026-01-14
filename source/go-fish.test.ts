@@ -2142,14 +2142,16 @@ async function runGameSimulation(sim: GoFishSimulator) {
 				}
 			}
 		} catch (e) {
+			log((e as any).stack);
 			log(`  Error in turn: ${e}`);
+			throw e;
 			// Try to switch turn on error
-			try {
-				const r = impureCircuits.switchTurn(sim.circuitContext, gameId, BigInt(currentPlayer));
-				sim.circuitContext = r.context;
-			} catch (e2) {
-				// Ignore
-			}
+			// try {
+			// 	const r = impureCircuits.switchTurn(sim.circuitContext, gameId, BigInt(currentPlayer));
+			// 	sim.circuitContext = r.context;
+			// } catch (e2) {
+			// 	// Ignore
+			// }
 		}
 		
 		// Check for books after getting cards (local tracking)

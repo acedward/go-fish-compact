@@ -3,7 +3,7 @@ import {type Ledger} from '../go-fish/contract/index.js';
 
 export type PrivateState = {};
 
-const keys = {
+export const keys = {
 	player1: BigInt(Math.floor(Math.random() * 1000000)),
 	player2: BigInt(Math.floor(Math.random() * 1000000)),
 	shuffleSeed1: new Uint8Array(32).fill(Math.floor(Math.random() * 256)),

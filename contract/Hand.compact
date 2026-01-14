@@ -4,7 +4,7 @@ module Hand {
     import CompactStandardLibrary prefix std_;
 
     // Card ownership per game: maps (gameId, card) -> playerId (1 or 2, 0 = no owner)
-    // We use a hash of (gameId, card) as the key since nested maps may not work well
+    // We use a hash of (gameId, card)
     export ledger cardOwnership: Map<Bytes<32>, Uint<8>>;
     
     // Hand sizes per game per player

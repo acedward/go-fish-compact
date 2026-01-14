@@ -8,7 +8,7 @@ import {
   CostModel,
 } from '@midnight-ntwrk/compact-runtime';
 import { Contract, ledger, type Witnesses } from '../go-fish/contract/index.js';
-import { createPlayerWitnesses, type PrivateState } from './witnesses.js';
+import { createPlayerWitnesses, type PrivateState, keys } from './witnesses.js';
 import { log, logError } from './logger.js';
 
 // ============================================
@@ -35,8 +35,6 @@ type GameState = {
   uiPhase: UIPhase;
   contractPhase: ContractGamePhaseValue;
   currentTurn: 1 | 2;
-  player1Hand: bigint[];
-  player2Hand: bigint[];
   player1Score: number;
   player2Score: number;
   message: string;
@@ -100,9 +98,23 @@ function generateGameId(): Uint8Array {
   return gameId;
 }
 
-// Format gameId for display (first 8 bytes as hex)
+// Format gameId for display (full hex)
 function formatGameId(gameId: Uint8Array): string {
+  return Array.from(gameId)
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+// Format gameId for short display (first 8 bytes)
+function formatGameIdShort(gameId: Uint8Array): string {
   return Array.from(gameId.slice(0, 8))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+// Format shuffle seed for display (first 8 bytes as hex)
+function formatShuffleSeed(seed: Uint8Array): string {
+  return Array.from(seed.slice(0, 8))
     .map(b => b.toString(16).padStart(2, '0'))
     .join('');
 }
@@ -244,8 +256,6 @@ export default function App() {
     uiPhase: 'initializing',
     contractPhase: ContractGamePhase.Setup,
     currentTurn: 1,
-    player1Hand: [],
-    player2Hand: [],
     player1Score: 0,
     player2Score: 0,
     message: '🎮 Welcome to GO FISH!',
@@ -253,6 +263,10 @@ export default function App() {
     lastRequestedRank: null,
     gameId: null,
   });
+  
+  // Hands are read from contract - separate state for caching
+  const [player1Hand, setPlayer1Hand] = useState<bigint[]>([]);
+  const [player2Hand, setPlayer2Hand] = useState<bigint[]>([]);
   const [inputMode, setInputMode] = useState<InputMode>('none');
   const [availableRanks, setAvailableRanks] = useState<number[]>([]);
   const [rankSelectionIndex, setRankSelectionIndex] = useState<number>(0);
@@ -303,10 +317,10 @@ export default function App() {
   // Deal all cards and start the game (calls dealCards which handles dealing + startGame internally)
   const callDealCards = useCallback((g: GoFishGame, gameId: Uint8Array) => {
     log('Calling contract dealCards()');
-    logContractCall('[System] dealCards()');
+    logContractCall('[P1] dealCards()');
     const r1 = g.player1.impureCircuits.dealCards(g.circuitContext, gameId, BigInt(1));
     g.circuitContext = r1.context;
-
+    logContractCall('[P2] dealCards()');
     const r2 = g.player2.impureCircuits.dealCards(g.circuitContext, gameId, BigInt(2));
     g.circuitContext = r2.context;
 
@@ -332,12 +346,22 @@ export default function App() {
     return hand;
   }, []);
 
+  // Refresh hands from contract - updates state with current card ownership
+  const refreshHandsFromContract = useCallback((g: GoFishGame, gameId: Uint8Array) => {
+    log('Refreshing hands from contract');
+    const p1Hand = queryPlayerHand(g, gameId, 1);
+    const p2Hand = queryPlayerHand(g, gameId, 2);
+    setPlayer1Hand(p1Hand);
+    setPlayer2Hand(p2Hand);
+    return { p1Hand, p2Hand };
+  }, [queryPlayerHand]);
+
   // Draw card during "Go Fish" - uses the contract's goFish circuit which enforces phase
   const drawCardGoFish = useCallback(async (g: GoFishGame, gameId: Uint8Array, playerId: number): Promise<bigint> => {
-    log(`Player ${playerId} going fishing (contract goFish circuit)`);
-    logContractCall(`[P${playerId}] goFish()`);
     const player = g.getPlayer(playerId as 1 | 2);
     const opponent = playerId === 1 ? g.player2 : g.player1;
+    log(`Player ${opponent.playerId} going fishing (contract goFish circuit)`);
+    logContractCall(`[P${opponent.playerId}] goFish()`);
     // Use the contract's goFish impure circuit which enforces phase validation
     const r1 = opponent.impureCircuits.goFish(g.circuitContext, gameId, BigInt(playerId));
     g.circuitContext = r1.context;
@@ -449,10 +473,12 @@ export default function App() {
   // ============================================
 
   // Check for books using contract and update scores
-  const checkForBooksWithContract = useCallback((g: GoFishGame, gameId: Uint8Array, playerId: number, hand: bigint[]): { booksScored: number[], updatedHand: bigint[] } => {
+  // Reads hand from contract state, scores any complete books, returns scored ranks
+  const checkForBooksWithContract = useCallback((g: GoFishGame, gameId: Uint8Array, playerId: number): { booksScored: number[] } => {
+    // Query hand directly from contract
+    const hand = queryPlayerHand(g, gameId, playerId);
     const grouped = groupCardsByRank(hand);
     const booksScored: number[] = [];
-    let updatedHand = [...hand];
 
     for (const [rank, cards] of grouped.entries()) {
       if (cards.length === 4) {
@@ -460,14 +486,12 @@ export default function App() {
         const scored = checkAndScoreBookContract(g, gameId, playerId, rank);
         if (scored) {
           booksScored.push(rank);
-          // Remove the 4 cards from hand
-          updatedHand = updatedHand.filter(c => getCardRank(c) !== rank);
         }
       }
     }
 
-    return { booksScored, updatedHand };
-  }, [checkAndScoreBookContract]);
+    return { booksScored };
+  }, [checkAndScoreBookContract, queryPlayerHand]);
 
   // Sync game state from contract
   const syncFromContract = useCallback((g: GoFishGame, gameId: Uint8Array): { phase: ContractGamePhaseValue, turn: 1 | 2, scores: [number, number] } => {
@@ -538,21 +562,20 @@ export default function App() {
           throw new Error(`dealCards did not transition to TurnStart, got: ${phaseAfterDeal}`);
         }
         
-        // Query hands from contract to discover what cards each player has
-        log('Querying player hands...');
-        const p1Hand = queryPlayerHand(g, gameId, 1);
-        const p2Hand = queryPlayerHand(g, gameId, 2);
-
-        log('Dealing complete', { p1Hand: p1Hand.map(String), p2Hand: p2Hand.map(String) });
-
         // Check for initial books using contract validation
-        const p1BookResult = checkForBooksWithContract(g, gameId, 1, p1Hand);
-        const p2BookResult = checkForBooksWithContract(g, gameId, 2, p2Hand);
+        log('Checking initial books...');
+        const p1BookResult = checkForBooksWithContract(g, gameId, 1);
+        const p2BookResult = checkForBooksWithContract(g, gameId, 2);
 
         log('Initial books checked', {
           p1Books: p1BookResult.booksScored,
           p2Books: p2BookResult.booksScored,
         });
+
+        // Refresh hands from contract (reads card ownership from contract state)
+        log('Refreshing hands from contract...');
+        const { p1Hand, p2Hand } = refreshHandsFromContract(g, gameId);
+        log('Hands refreshed', { p1Hand: p1Hand.map(String), p2Hand: p2Hand.map(String) });
 
         // Sync final state from contract
         const { turn, scores } = syncFromContract(g, gameId);
@@ -561,8 +584,6 @@ export default function App() {
           ...prev,
           uiPhase: 'ready',
           contractPhase: ContractGamePhase.TurnStart,
-          player1Hand: p1BookResult.updatedHand,
-          player2Hand: p2BookResult.updatedHand,
           player1Score: scores[0],
           player2Score: scores[1],
           message: `✅ Game ready! Player ${turn} goes first.`,
@@ -579,7 +600,7 @@ export default function App() {
     };
 
     initGame();
-  }, [applyMask, callDealCards, queryPlayerHand, checkForBooksWithContract, getContractPhase, syncFromContract]);
+  }, [applyMask, callDealCards, checkForBooksWithContract, refreshHandsFromContract, getContractPhase, syncFromContract]);
 
   // ============================================
   // TURN LOGIC
@@ -618,7 +639,8 @@ export default function App() {
       setGameState(prev => ({ ...prev, currentTurn: contractTurn }));
     }
 
-    const currentHand = contractTurn === 1 ? gameState.player1Hand : gameState.player2Hand;
+    // Read current hand from state (which is synced from contract)
+    const currentHand = contractTurn === 1 ? player1Hand : player2Hand;
 
     if (currentHand.length === 0) {
       if (!isDeckEmpty(game, gameId)) {
@@ -661,7 +683,7 @@ export default function App() {
       currentTurn: contractTurn,
       message: `Player ${contractTurn}, select a rank to ask for:` 
     }));
-  }, [game, gameState, getContractPhase, getContractTurn, getContractScores, isDeckEmpty, checkAndEndGameContract, callSwitchTurn]);
+  }, [game, gameState, player1Hand, player2Hand, getContractPhase, getContractTurn, getContractScores, isDeckEmpty, checkAndEndGameContract, callSwitchTurn]);
 
   // Trigger prepareTurn when ready
   useEffect(() => {
@@ -688,14 +710,16 @@ export default function App() {
     try {
       const currentPlayer = getContractTurn(game, gameId);
       const card = await drawCardGoFish(game, gameId, currentPlayer);
-      const playerKey = currentPlayer === 1 ? 'player1Hand' : 'player2Hand';
 
       // Since hand was empty, drawn card doesn't match any "requested" rank
       // Call afterGoFish to switch turns (pass playerId for security)
       callAfterGoFish(game, gameId, currentPlayer, false);
 
-      const newHand = [card];
-      const { booksScored, updatedHand } = checkForBooksWithContract(game, gameId, currentPlayer, newHand);
+      // Check for books (reads from contract)
+      const { booksScored } = checkForBooksWithContract(game, gameId, currentPlayer);
+      
+      // Refresh hands from contract
+      refreshHandsFromContract(game, gameId);
       
       // Sync state from contract
       const { phase, turn, scores } = syncFromContract(game, gameId);
@@ -704,7 +728,6 @@ export default function App() {
         ...prev,
         contractPhase: phase,
         currentTurn: turn,
-        [playerKey]: updatedHand,
         player1Score: scores[0],
         player2Score: scores[1],
         message: `Drew: ${formatCard(card)}${booksScored.length > 0 ? ` 📚 BOOK: ${booksScored.map(r => getRankName(r)).join(', ')}!` : ''}`,
@@ -716,7 +739,7 @@ export default function App() {
       logError('handleDrawCardEmptyHand error', error);
       setGameState(prev => ({ ...prev, message: `❌ Error: ${error.message}`, loading: false }));
     }
-  }, [game, gameState.gameId, isDeckEmpty, getContractTurn, drawCardGoFish, callAfterGoFish, checkForBooksWithContract, syncFromContract]);
+  }, [game, gameState.gameId, isDeckEmpty, getContractTurn, drawCardGoFish, callAfterGoFish, checkForBooksWithContract, refreshHandsFromContract, syncFromContract]);
 
   // Handle drawing card during Go Fish (opponent didn't have the card)
   const handleGoFishDraw = useCallback(async (requestedRank: number) => {
@@ -747,7 +770,6 @@ export default function App() {
       // Use contract's goFish circuit (enforces phase validation)
       const card = await drawCardGoFish(game, gameId, currentPlayer);
       const drawnRank = getCardRank(card);
-      const playerKey = currentPlayer === 1 ? 'player1Hand' : 'player2Hand';
 
       // Check if drew the requested card
       const drewRequestedCard = drawnRank === requestedRank;
@@ -756,12 +778,14 @@ export default function App() {
       // Now passes gameId and playerId for security validation
       callAfterGoFish(game, gameId, currentPlayer, drewRequestedCard);
 
-      // Update local hand and check for books
-      const newHand = [...gameState[playerKey], card];
-      const { booksScored, updatedHand } = checkForBooksWithContract(game, gameId, currentPlayer, newHand);
+      // Check for books (reads from contract)
+      const { booksScored } = checkForBooksWithContract(game, gameId, currentPlayer);
 
       // Check if game should end
       checkAndEndGameContract(game, gameId);
+      
+      // Refresh hands from contract
+      refreshHandsFromContract(game, gameId);
       
       // Sync state from contract
       const { phase, turn, scores } = syncFromContract(game, gameId);
@@ -780,7 +804,6 @@ export default function App() {
         ...prev,
         contractPhase: phase,
         currentTurn: turn,
-        [playerKey]: updatedHand,
         player1Score: scores[0],
         player2Score: scores[1],
         message,
@@ -793,7 +816,7 @@ export default function App() {
       logError('handleGoFishDraw error', error);
       setGameState(prev => ({ ...prev, message: `❌ Error: ${error.message}`, loading: false }));
     }
-  }, [game, gameState, isDeckEmpty, getContractTurn, drawCardGoFish, callAfterGoFish, callSwitchTurn, checkForBooksWithContract, checkAndEndGameContract, syncFromContract]);
+  }, [game, gameState.gameId, isDeckEmpty, getContractTurn, drawCardGoFish, callAfterGoFish, callSwitchTurn, checkForBooksWithContract, checkAndEndGameContract, refreshHandsFromContract, syncFromContract]);
 
   const handleAskForCards = useCallback(async (rank: number) => {
     if (!game || !gameState.gameId) return;
@@ -806,8 +829,6 @@ export default function App() {
 
     const askingPlayer = contractTurn;
     const askedPlayer = askingPlayer === 1 ? 2 : 1;
-    const askedHandKey = askedPlayer === 1 ? 'player1Hand' : 'player2Hand';
-    const askingHandKey = askingPlayer === 1 ? 'player1Hand' : 'player2Hand';
 
     setInputMode('none');
 
@@ -840,30 +861,14 @@ export default function App() {
 
     if (result.opponentHadCard) {
       // Opponent had cards! Contract already transferred them
-      // Update UI hands to reflect contract state
-      const opponentHand = gameState[askedHandKey];
-      
-      // Find transferred cards (all cards of this rank in opponent's hand)
-      const transferredCards: bigint[] = [];
-      for (let suit = 0; suit < 4; suit++) {
-        const cardValue = BigInt(rank + suit * 13);
-        if (opponentHand.includes(cardValue)) {
-          transferredCards.push(cardValue);
-        }
-      }
-
-      // Remove transferred cards from asked player's hand
-      // Add transferred cards to asking player's hand
-      const updatedAskedHand = gameState[askedHandKey].filter(
-        c => !transferredCards.includes(c)
-      );
-      const updatedAskingHand = [...gameState[askingHandKey], ...transferredCards];
-
-      // Check for books with contract validation
-      const { booksScored, updatedHand: finalAskingHand } = checkForBooksWithContract(game, gameId, askingPlayer, updatedAskingHand);
+      // Check for books with contract validation (reads hand from contract)
+      const { booksScored } = checkForBooksWithContract(game, gameId, askingPlayer);
 
       // Check if game should end
       checkAndEndGameContract(game, gameId);
+
+      // Refresh hands from contract (source of truth for card ownership)
+      refreshHandsFromContract(game, gameId);
 
       // Sync state from contract
       const { phase, turn, scores } = syncFromContract(game, gameId);
@@ -878,8 +883,6 @@ export default function App() {
         ...prev,
         contractPhase: phase,
         currentTurn: turn,
-        [askingHandKey]: finalAskingHand,
-        [askedHandKey]: updatedAskedHand,
         player1Score: scores[0],
         player2Score: scores[1],
         message,
@@ -897,7 +900,7 @@ export default function App() {
         handleGoFishDraw(rank);
       }, 1000);
     }
-  }, [game, gameState, getContractTurn, callAskForCardAndProcess, checkForBooksWithContract, checkAndEndGameContract, syncFromContract, handleGoFishDraw]);
+  }, [game, gameState.gameId, gameState.currentTurn, getContractTurn, callAskForCardAndProcess, checkForBooksWithContract, checkAndEndGameContract, refreshHandsFromContract, syncFromContract, handleGoFishDraw]);
 
   // ============================================
   // INPUT HANDLING
@@ -943,7 +946,7 @@ export default function App() {
   // ============================================
 
   const renderHand = (player: 1 | 2, showCards: boolean) => {
-    const hand = player === 1 ? gameState.player1Hand : gameState.player2Hand;
+    const hand = player === 1 ? player1Hand : player2Hand;
     const score = player === 1 ? gameState.player1Score : gameState.player2Score;
     const isCurrentPlayer = gameState.currentTurn === player;
     const isPlaying = gameState.uiPhase === 'ready' && gameState.contractPhase === ContractGamePhase.TurnStart;
@@ -978,7 +981,7 @@ export default function App() {
   const renderRankSelector = () => {
     if (inputMode !== 'selectRank' || availableRanks.length === 0) return null;
 
-    const currentHand = gameState.currentTurn === 1 ? gameState.player1Hand : gameState.player2Hand;
+    const currentHand = gameState.currentTurn === 1 ? player1Hand : player2Hand;
     const grouped = groupCardsByRank(currentHand);
 
     return (
@@ -1010,7 +1013,18 @@ export default function App() {
         <Box flexDirection="column" borderStyle="round" borderColor="blue" padding={1} width="40%">
           <Text bold color="blue">📋 Game State (Contract)</Text>
           <Box marginTop={1} />
-          <Text color="gray" dimColor>Game ID: {formatGameId(gameId)}...</Text>
+          <Text color="magenta" bold>🎲 Game ID:</Text>
+          <Text color="gray" dimColor>  {formatGameIdShort(gameId)}...</Text>
+          <Box marginTop={1} />
+          <Text color="yellow" bold>🔑 Player Secrets:</Text>
+          <Text color="cyan">  P1 Key: {keys.player1.toString()}</Text>
+          <Text color="cyan">  P2 Key: {keys.player2.toString()}</Text>
+          <Box marginTop={1} />
+          <Text color="yellow" bold>🔀 Shuffle Seeds:</Text>
+          <Text color="cyan">  P1: {formatShuffleSeed(keys.shuffleSeed1)}...</Text>
+          <Text color="cyan">  P2: {formatShuffleSeed(keys.shuffleSeed2)}...</Text>
+          <Box marginTop={1} />
+          <Text color="gray" dimColor>─────────────────</Text>
           <Text>🃏 Deck: {deckRemaining} cards</Text>
           <Text>📚 Total Books: {totalBooks}/13</Text>
           <Text>🔄 Turn: Player {gameState.currentTurn}</Text>
