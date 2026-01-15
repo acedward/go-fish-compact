@@ -11,8 +11,8 @@ module HashPersistent {
     export circuit hashVector(vector: [Bytes<32>, Bytes<32>]): Bytes<32> {
         return std_persistentHash<[Bytes<32>, Bytes<32>]>(vector);
     }
-    export circuit hashVector2(vector: Vector<52, Field>): Bytes<32> {
-        return std_persistentHash<Vector<52, Field>>(vector);
+    export circuit hashVector2(vector: Vector<52, Bytes<32>>): Bytes<32> {
+        return std_persistentHash<Vector<52, Bytes<32>>>(vector);
     }
     export circuit hashVector3(vector: [CurvePoint, Uint<248>]): Bytes<32> {
         return std_persistentHash<[CurvePoint, Uint<248>]>(vector);

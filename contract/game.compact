@@ -425,32 +425,19 @@ export circuit doesPlayerHaveCard(gameId: Bytes<32>, playerId: Uint<64>, _target
     const baseCard3 = deck_reverseDeckCurveToCard.lookup(targetRank+26 as Uint<32>) as CurvePoint;
     const baseCard4 = deck_reverseDeckCurveToCard.lookup(targetRank+39 as Uint<32>) as CurvePoint;
 
-    if (disclosed_playerId == 1 as Uint<64>) {
-        const [secret1, inv1] = deck_getSecretFromPlayerId(gid, 1);
-        const card1 = std_ecMul(baseCard1, secret1);
-        const card2 = std_ecMul(baseCard2, secret1);
-        const card3 = std_ecMul(baseCard3, secret1);
-        const card4 = std_ecMul(baseCard4, secret1);
-        return (
-            hand_doesPlayerHaveCard(gid, 1 as Uint<64>, disclose(card1)) ||
-            hand_doesPlayerHaveCard(gid, 1 as Uint<64>, disclose(card2)) ||
-            hand_doesPlayerHaveCard(gid, 1 as Uint<64>, disclose(card3)) ||
-            hand_doesPlayerHaveCard(gid, 1 as Uint<64>, disclose(card4))
-        );
-    } else if (disclosed_playerId == 2 as Uint<64>) {
-        const [secret2, inv2] = deck_getSecretFromPlayerId(gid, 2);
-        const card1 = std_ecMul(baseCard1, secret2);
-        const card2 = std_ecMul(baseCard2, secret2);
-        const card3 = std_ecMul(baseCard3, secret2);
-        const card4 = std_ecMul(baseCard4, secret2);
-        return (
-            hand_doesPlayerHaveCard(gid, 2 as Uint<64>, disclose(card1)) ||
-            hand_doesPlayerHaveCard(gid, 2 as Uint<64>, disclose(card2)) ||
-            hand_doesPlayerHaveCard(gid, 2 as Uint<64>, disclose(card3)) ||
-            hand_doesPlayerHaveCard(gid, 2 as Uint<64>, disclose(card4))
-        );
-    }
-    return false;
+    const [secret, _] = deck_getSecretFromPlayerId(gid, disclosed_playerId);
+    const card1 = std_ecMul(baseCard1, secret);
+    const card2 = std_ecMul(baseCard2, secret);
+    const card3 = std_ecMul(baseCard3, secret);
+    const card4 = std_ecMul(baseCard4, secret);
+    return (
+        hand_doesPlayerHaveCard(gid, disclosed_playerId, disclose(card1)) ||
+        hand_doesPlayerHaveCard(gid, disclosed_playerId, disclose(card2)) ||
+        hand_doesPlayerHaveCard(gid, disclosed_playerId, disclose(card3)) ||
+        hand_doesPlayerHaveCard(gid, disclosed_playerId, disclose(card4))
+    );
+    
+    
 }
 
 export circuit countCardsOfRank(gameId: Bytes<32>, playerId: Uint<64>, targetRank: Uint<32>): Uint<8> {
@@ -693,235 +680,235 @@ export circuit doesGameExist(gameId: Bytes<32>): Boolean {
 
 // ---- game.compact internal helper circuits ----
 
-export circuit _dealCard(gameId: Bytes<32>, toPlayerId: Uint<64>): CurvePoint {
-    return dealCard(disclose(gameId), disclose(toPlayerId));
-}
+// export circuit _dealCard(gameId: Bytes<32>, toPlayerId: Uint<64>): CurvePoint {
+//     return dealCard(disclose(gameId), disclose(toPlayerId));
+// }
 
-export circuit _startGame(gameId: Bytes<32>): [] {
-    return startGame(disclose(gameId));
-}
+// export circuit _startGame(gameId: Bytes<32>): [] {
+//     return startGame(disclose(gameId));
+// }
 
-export circuit _getTopCardForOpponent(gameId: Bytes<32>, toPlayerId: Uint<64>): CurvePoint {
-    return getTopCardForOpponent(disclose(gameId), disclose(toPlayerId));
-}
+// export circuit _getTopCardForOpponent(gameId: Bytes<32>, toPlayerId: Uint<64>): CurvePoint {
+//     return getTopCardForOpponent(disclose(gameId), disclose(toPlayerId));
+// }
 
-export circuit _moveCardFromPlayerToPlayerCardInHand(
-    gameId: Bytes<32>,
-    fromPlayerId: Uint<64>,
-    semiMaskedPoint: CurvePoint
-): [] {
-    return moveCardFromPlayerToPlayerCardInHand(disclose(gameId), disclose(fromPlayerId), disclose(semiMaskedPoint));
-}
+// export circuit _moveCardFromPlayerToPlayerCardInHand(
+//     gameId: Bytes<32>,
+//     fromPlayerId: Uint<64>,
+//     semiMaskedPoint: CurvePoint
+// ): [] {
+//     return moveCardFromPlayerToPlayerCardInHand(disclose(gameId), disclose(fromPlayerId), disclose(semiMaskedPoint));
+// }
 
-export circuit _transferAllCardsOfRank(gameId: Bytes<32>, fromPlayerId: Uint<64>, targetRank: Uint<32>): [] {
-    return transferAllCardsOfRank(disclose(gameId), disclose(fromPlayerId), disclose(targetRank));
-}
+// export circuit _transferAllCardsOfRank(gameId: Bytes<32>, fromPlayerId: Uint<64>, targetRank: Uint<32>): [] {
+//     return transferAllCardsOfRank(disclose(gameId), disclose(fromPlayerId), disclose(targetRank));
+// }
 
-export circuit _transferCardOfRank(
-    gameId: Bytes<32>,
-    fromPlayerId: Uint<64>,
-    targetRank: Uint<32>,
-    cardSuit: Uint<32>
-): Boolean {
-    return transferCardOfRank(disclose(gameId), disclose(fromPlayerId), disclose(targetRank), disclose(cardSuit));
-}
+// export circuit _transferCardOfRank(
+//     gameId: Bytes<32>,
+//     fromPlayerId: Uint<64>,
+//     targetRank: Uint<32>,
+//     cardSuit: Uint<32>
+// ): Boolean {
+//     return transferCardOfRank(disclose(gameId), disclose(fromPlayerId), disclose(targetRank), disclose(cardSuit));
+// }
 
-export circuit _countCardsOfRank(gameId: Bytes<32>, playerId: Uint<64>, targetRank: Uint<32>): Uint<8> {
-    return countCardsOfRank(disclose(gameId), disclose(playerId), disclose(targetRank));
-}
+// export circuit _countCardsOfRank(gameId: Bytes<32>, playerId: Uint<64>, targetRank: Uint<32>): Uint<8> {
+//     return countCardsOfRank(disclose(gameId), disclose(playerId), disclose(targetRank));
+// }
 
-// ---- Re-export wrappers for Deck module (`contract/Deck.compact`) ----
+// // ---- Re-export wrappers for Deck module (`contract/Deck.compact`) ----
 
-export circuit _deck_init_static_deck(): [] {
-    return deck_init_static_deck();
-}
+// export circuit _deck_init_static_deck(): [] {
+//     return deck_init_static_deck();
+// }
 
 export circuit a_deck_init_deck(gameId: Bytes<32>): [] {
     return deck_init_deck(disclose(gameId));
 }
 
-export circuit _deck_getSecretFromPlayerId(gameId: Bytes<32>, playerId: Uint<64>): [Field, Field] {
-    const x = deck_getSecretFromPlayerId(disclose(gameId), disclose(playerId));
-    return [disclose(x[0]), disclose(x[1])];
-}
+// export circuit _deck_getSecretFromPlayerId(gameId: Bytes<32>, playerId: Uint<64>): [Field, Field] {
+//     const x = deck_getSecretFromPlayerId(disclose(gameId), disclose(playerId));
+//     return [disclose(x[0]), disclose(x[1])];
+// }
 
-export circuit _deck_getSecretHashForPlayer(gameId: Bytes<32>, playerId: Uint<64>): Bytes<32> {
-    const x = deck_getSecretHashForPlayer(disclose(gameId), disclose(playerId));
-    return disclose(x);
-}
+// export circuit _deck_getSecretHashForPlayer(gameId: Bytes<32>, playerId: Uint<64>): Bytes<32> {
+//     const x = deck_getSecretHashForPlayer(disclose(gameId), disclose(playerId));
+//     return disclose(x);
+// }
 
 export circuit a_deck_apply_mask_to_deck(gameId: Bytes<32>, playerIndex: Uint<64>): [] {
     return deck_apply_mask_to_deck(disclose(gameId), disclose(playerIndex));
 }
 
-export circuit _deck_getCardFromPoint(point: CurvePoint): Field {
-    return deck_getCardFromPoint(disclose(point));
-}
+// export circuit _deck_getCardFromPoint(point: CurvePoint): Field {
+//     return deck_getCardFromPoint(disclose(point));
+// }
 
-export circuit _deck_getTopCardIndex(gameId: Bytes<32>): Uint<32> {
-    return deck_getTopCardIndex(disclose(gameId));
-}
+// export circuit _deck_getTopCardIndex(gameId: Bytes<32>): Uint<32> {
+//     return deck_getTopCardIndex(disclose(gameId));
+// }
 
-export circuit _deck_getDeckSize(gameId: Bytes<32>): Uint<64> {
-    return deck_getDeckSize(disclose(gameId));
-}
+// export circuit _deck_getDeckSize(gameId: Bytes<32>): Uint<64> {
+//     return deck_getDeckSize(disclose(gameId));
+// }
 
-export circuit _deck_partial_decryption(gameId: Bytes<32>, point: CurvePoint, playerId: Uint<64>): CurvePoint {
-    return deck_partial_decryption(disclose(gameId), disclose(point), disclose(playerId));
-}
+// export circuit _deck_partial_decryption(gameId: Bytes<32>, point: CurvePoint, playerId: Uint<64>): CurvePoint {
+//     return deck_partial_decryption(disclose(gameId), disclose(point), disclose(playerId));
+// }
 
-export circuit _deck_getTopCard(gameId: Bytes<32>, playerId: Uint<64>): CurvePoint {
-    return deck_getTopCard(disclose(gameId), disclose(playerId));
-}
+// export circuit _deck_getTopCard(gameId: Bytes<32>, playerId: Uint<64>): CurvePoint {
+//     return deck_getTopCard(disclose(gameId), disclose(playerId));
+// }
 
-export circuit _deck_getDeckCard(gameId: Bytes<32>, cardIndex: Field): CurvePoint {
-    return deck_getDeckCard(disclose(gameId), disclose(cardIndex));
-}
+// export circuit _deck_getDeckCard(gameId: Bytes<32>, cardIndex: Field): CurvePoint {
+//     return deck_getDeckCard(disclose(gameId), disclose(cardIndex));
+// }
 
-export circuit _deck_storeSemiMaskedMapping(gameId: Bytes<32>, semiMasked: CurvePoint, fullyMasked: CurvePoint): [] {
-    return deck_storeSemiMaskedMapping(disclose(gameId), disclose(semiMasked), disclose(fullyMasked));
-}
+// export circuit _deck_storeSemiMaskedMapping(gameId: Bytes<32>, semiMasked: CurvePoint, fullyMasked: CurvePoint): [] {
+//     return deck_storeSemiMaskedMapping(disclose(gameId), disclose(semiMasked), disclose(fullyMasked));
+// }
 
-export circuit _deck_lookupFullyMasked(gameId: Bytes<32>, semiMasked: CurvePoint): CurvePoint {
-    return deck_lookupFullyMasked(disclose(gameId), disclose(semiMasked));
-}
+// export circuit _deck_lookupFullyMasked(gameId: Bytes<32>, semiMasked: CurvePoint): CurvePoint {
+//     return deck_lookupFullyMasked(disclose(gameId), disclose(semiMasked));
+// }
 
 export circuit a_deck_shuffle_deck(gameId: Bytes<32>, playerIndex: Uint<64>): [] {
     return deck_shuffle_deck(disclose(gameId), disclose(playerIndex));
 }
 
-// ---- Re-export wrappers for Hand module (`contract/Hand.compact`) ----
+// // ---- Re-export wrappers for Hand module (`contract/Hand.compact`) ----
 
 export circuit _hand_init_hands(gameId: Bytes<32>): [] {
     return hand_init_hands(disclose(gameId));
 }
 
-export circuit _hand_getHandSize(gameId: Bytes<32>, playerId: Uint<64>): Uint<64> {
-    return hand_getHandSize(disclose(gameId), disclose(playerId));
-}
+// export circuit _hand_getHandSize(gameId: Bytes<32>, playerId: Uint<64>): Uint<64> {
+//     return hand_getHandSize(disclose(gameId), disclose(playerId));
+// }
 
-export circuit _hand_removeCardFromHand(gameId: Bytes<32>, playerId: Uint<64>, semiMaskedPoint: CurvePoint): CurvePoint {
-    return hand_removeCardFromHand(disclose(gameId), disclose(playerId), disclose(semiMaskedPoint));
-}
+// export circuit _hand_removeCardFromHand(gameId: Bytes<32>, playerId: Uint<64>, semiMaskedPoint: CurvePoint): CurvePoint {
+//     return hand_removeCardFromHand(disclose(gameId), disclose(playerId), disclose(semiMaskedPoint));
+// }
 
-export circuit _hand_insertCardIntoHand(gameId: Bytes<32>, playerId: Uint<64>, card: CurvePoint): [] {
-    return hand_insertCardIntoHand(disclose(gameId), disclose(playerId), disclose(card));
-}
+// export circuit _hand_insertCardIntoHand(gameId: Bytes<32>, playerId: Uint<64>, card: CurvePoint): [] {
+//     return hand_insertCardIntoHand(disclose(gameId), disclose(playerId), disclose(card));
+// }
 
-export circuit _hand_removeCardFromHandForBook(gameId: Bytes<32>, playerId: Uint<64>, semiMaskedPoint: CurvePoint): [] {
-    return hand_removeCardFromHandForBook(disclose(gameId), disclose(playerId), disclose(semiMaskedPoint));
-}
+// export circuit _hand_removeCardFromHandForBook(gameId: Bytes<32>, playerId: Uint<64>, semiMaskedPoint: CurvePoint): [] {
+//     return hand_removeCardFromHandForBook(disclose(gameId), disclose(playerId), disclose(semiMaskedPoint));
+// }
 
-export circuit _hand_doesPlayerHaveCard(gameId: Bytes<32>, playerId: Uint<64>, card: CurvePoint): Boolean {
-    return hand_doesPlayerHaveCard(disclose(gameId), disclose(playerId), disclose(card));
-}
+// export circuit _hand_doesPlayerHaveCard(gameId: Bytes<32>, playerId: Uint<64>, card: CurvePoint): Boolean {
+//     return hand_doesPlayerHaveCard(disclose(gameId), disclose(playerId), disclose(card));
+// }
 
-export circuit _hand_doesPlayerHaveCardN(gameId: Bytes<32>, playerId: Uint<64>, card: CurvePoint): Uint<8> {
-    return hand_doesPlayerHaveCardN(disclose(gameId), disclose(playerId), disclose(card));
-}
+// export circuit _hand_doesPlayerHaveCardN(gameId: Bytes<32>, playerId: Uint<64>, card: CurvePoint): Uint<8> {
+//     return hand_doesPlayerHaveCardN(disclose(gameId), disclose(playerId), disclose(card));
+// }
 
-// ---- Re-export wrappers for GoFish module (`contract/GoFish.compact`) ----
+// // ---- Re-export wrappers for GoFish module (`contract/GoFish.compact`) ----
 
 export circuit _go_fish_init_game(gameId: Bytes<32>): [] {
     return go_fish_init_game(disclose(gameId));
 }
 
-export circuit _go_fish_doesGameExist(gameId: Bytes<32>): Boolean {
-    return go_fish_doesGameExist(disclose(gameId));
-}
+// export circuit _go_fish_doesGameExist(gameId: Bytes<32>): Boolean {
+//     return go_fish_doesGameExist(disclose(gameId));
+// }
 
-export circuit _go_fish_switchTurn(gameId: Bytes<32>): [] {
-    return go_fish_switchTurn(disclose(gameId));
-}
+// export circuit _go_fish_switchTurn(gameId: Bytes<32>): [] {
+//     return go_fish_switchTurn(disclose(gameId));
+// }
 
-export circuit _go_fish_setPhase(gameId: Bytes<32>, newPhase: go_fish_GamePhase): [] {
-    return go_fish_setPhase(disclose(gameId), disclose(newPhase));
-}
+// export circuit _go_fish_setPhase(gameId: Bytes<32>, newPhase: go_fish_GamePhase): [] {
+//     return go_fish_setPhase(disclose(gameId), disclose(newPhase));
+// }
 
-export circuit _go_fish_addScore(gameId: Bytes<32>, playerId: Uint<64>): [] {
-    return go_fish_addScore(disclose(gameId), disclose(playerId));
-}
+// export circuit _go_fish_addScore(gameId: Bytes<32>, playerId: Uint<64>): [] {
+//     return go_fish_addScore(disclose(gameId), disclose(playerId));
+// }
 
-export circuit _go_fish_markCardDealt(gameId: Bytes<32>, playerId: Uint<64>): [] {
-    return go_fish_markCardDealt(disclose(gameId), disclose(playerId));
-}
+// export circuit _go_fish_markCardDealt(gameId: Bytes<32>, playerId: Uint<64>): [] {
+//     return go_fish_markCardDealt(disclose(gameId), disclose(playerId));
+// }
 
-export circuit _go_fish_isDealingComplete(gameId: Bytes<32>): Boolean {
-    return go_fish_isDealingComplete(disclose(gameId));
-}
+// export circuit _go_fish_isDealingComplete(gameId: Bytes<32>): Boolean {
+//     return go_fish_isDealingComplete(disclose(gameId));
+// }
 
-export circuit _go_fish_startGame(gameId: Bytes<32>): [] {
-    return go_fish_startGame(disclose(gameId));
-}
+// export circuit _go_fish_startGame(gameId: Bytes<32>): [] {
+//     return go_fish_startGame(disclose(gameId));
+// }
 
-export circuit _go_fish_isGameOver(gameId: Bytes<32>): Boolean {
-    return go_fish_isGameOver(disclose(gameId));
-}
+// export circuit _go_fish_isGameOver(gameId: Bytes<32>): Boolean {
+//     return go_fish_isGameOver(disclose(gameId));
+// }
 
-export circuit _go_fish_getCurrentTurn(gameId: Bytes<32>): Uint<64> {
-    return go_fish_getCurrentTurn(disclose(gameId));
-}
+// export circuit _go_fish_getCurrentTurn(gameId: Bytes<32>): Uint<64> {
+//     return go_fish_getCurrentTurn(disclose(gameId));
+// }
 
-export circuit _go_fish_getPhase(gameId: Bytes<32>): go_fish_GamePhase {
-    return go_fish_getPhase(disclose(gameId));
-}
+// export circuit _go_fish_getPhase(gameId: Bytes<32>): go_fish_GamePhase {
+//     return go_fish_getPhase(disclose(gameId));
+// }
 
-export circuit _go_fish_endGame(gameId: Bytes<32>): [] {
-    return go_fish_endGame(disclose(gameId));
-}
+// export circuit _go_fish_endGame(gameId: Bytes<32>): [] {
+//     return go_fish_endGame(disclose(gameId));
+// }
 
-export circuit _go_fish_setLastAskedRank(gameId: Bytes<32>, rank: Uint<32>): [] {
-    return go_fish_setLastAskedRank(disclose(gameId), disclose(rank));
-}
+// export circuit _go_fish_setLastAskedRank(gameId: Bytes<32>, rank: Uint<32>): [] {
+//     return go_fish_setLastAskedRank(disclose(gameId), disclose(rank));
+// }
 
-export circuit _go_fish_setLastAskingPlayer(gameId: Bytes<32>, playerId: Uint<64>): [] {
-    return go_fish_setLastAskingPlayer(disclose(gameId), disclose(playerId));
-}
+// export circuit _go_fish_setLastAskingPlayer(gameId: Bytes<32>, playerId: Uint<64>): [] {
+//     return go_fish_setLastAskingPlayer(disclose(gameId), disclose(playerId));
+// }
 
-export circuit _go_fish_clearLastAskedRank(gameId: Bytes<32>): [] {
-    return go_fish_clearLastAskedRank(disclose(gameId));
-}
+// export circuit _go_fish_clearLastAskedRank(gameId: Bytes<32>): [] {
+//     return go_fish_clearLastAskedRank(disclose(gameId));
+// }
 
-export circuit _go_fish_getLastAskedRank(gameId: Bytes<32>): Uint<32> {
-    return go_fish_getLastAskedRank(disclose(gameId));
-}
+// export circuit _go_fish_getLastAskedRank(gameId: Bytes<32>): Uint<32> {
+//     return go_fish_getLastAskedRank(disclose(gameId));
+// }
 
-export circuit _go_fish_getLastAskingPlayer(gameId: Bytes<32>): Uint<64> {
-    return go_fish_getLastAskingPlayer(disclose(gameId));
-}
+// export circuit _go_fish_getLastAskingPlayer(gameId: Bytes<32>): Uint<64> {
+//     return go_fish_getLastAskingPlayer(disclose(gameId));
+// }
 
 export circuit _go_fish_markMaskApplied(gameId: Bytes<32>, playerId: Uint<64>): [] {
     return go_fish_markMaskApplied(disclose(gameId), disclose(playerId));
 }
 
-export circuit _go_fish_hasMaskApplied(gameId: Bytes<32>, playerId: Uint<64>): Boolean {
-    return go_fish_hasMaskApplied(disclose(gameId), disclose(playerId));
-}
+// export circuit _go_fish_hasMaskApplied(gameId: Bytes<32>, playerId: Uint<64>): Boolean {
+//     return go_fish_hasMaskApplied(disclose(gameId), disclose(playerId));
+// }
 
-export circuit _go_fish_getCardsDealt(gameId: Bytes<32>, playerId: Uint<64>): Uint<64> {
-    return go_fish_getCardsDealt(disclose(gameId), disclose(playerId));
-}
+// export circuit _go_fish_getCardsDealt(gameId: Bytes<32>, playerId: Uint<64>): Uint<64> {
+//     return go_fish_getCardsDealt(disclose(gameId), disclose(playerId));
+// }
 
-export circuit _go_fish_setPreDrawRankCount(gameId: Bytes<32>, count: Uint<8>): [] {
-    return go_fish_setPreDrawRankCount(disclose(gameId), disclose(count));
-}
+// export circuit _go_fish_setPreDrawRankCount(gameId: Bytes<32>, count: Uint<8>): [] {
+//     return go_fish_setPreDrawRankCount(disclose(gameId), disclose(count));
+// }
 
-export circuit _go_fish_getPreDrawRankCount(gameId: Bytes<32>): Uint<8> {
-    return go_fish_getPreDrawRankCount(disclose(gameId));
-}
+// export circuit _go_fish_getPreDrawRankCount(gameId: Bytes<32>): Uint<8> {
+//     return go_fish_getPreDrawRankCount(disclose(gameId));
+// }
 
-export circuit _go_fish_markHasDealt(gameId: Bytes<32>, playerId: Uint<64>): [] {
-    return go_fish_markHasDealt(disclose(gameId), disclose(playerId));
-}
+// export circuit _go_fish_markHasDealt(gameId: Bytes<32>, playerId: Uint<64>): [] {
+//     return go_fish_markHasDealt(disclose(gameId), disclose(playerId));
+// }
 
-export circuit _go_fish_hasDealt(gameId: Bytes<32>, playerId: Uint<64>): Boolean {
-    return go_fish_hasDealt(disclose(gameId), disclose(playerId));
-}
+// export circuit _go_fish_hasDealt(gameId: Bytes<32>, playerId: Uint<64>): Boolean {
+//     return go_fish_hasDealt(disclose(gameId), disclose(playerId));
+// }
 
-export circuit _go_fish_getPlayersDealtCount(gameId: Bytes<32>): Uint<8> {
-    return go_fish_getPlayersDealtCount(disclose(gameId));
-}
+// export circuit _go_fish_getPlayersDealtCount(gameId: Bytes<32>): Uint<8> {
+//     return go_fish_getPlayersDealtCount(disclose(gameId));
+// }
 
-export circuit _go_fish_getScores(gameId: Bytes<32>): [Uint<8>, Uint<8>] {
-    return go_fish_getScores(disclose(gameId));
-}
+// export circuit _go_fish_getScores(gameId: Bytes<32>): [Uint<8>, Uint<8>] {
+//     return go_fish_getScores(disclose(gameId));
+// }

@@ -14,8 +14,8 @@ module HashTransient {
         const hash = std_transientHash<[Bytes<32>, Bytes<32>]>(vector);
         return std_upgradeFromTransient(hash);
     }
-    export circuit hashVector2(vector: Vector<52, Field>): Bytes<32> {
-        const hash = std_transientHash<Vector<52, Field>>(vector);
+    export circuit hashVector2(vector: Vector<52, Bytes<32>>): Bytes<32> {
+        const hash = std_transientHash<Vector<52, Bytes<32>>>(vector);
         return std_upgradeFromTransient(hash);
     }
     export circuit hashVector3(vector: [CurvePoint, Uint<248>]): Bytes<32> {
