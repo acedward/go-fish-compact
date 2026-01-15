@@ -44,19 +44,24 @@ module Deck {
 
     // Helper to create composite key for deck cards
     circuit makeDeckCardKey(gameId: Bytes<32>, cardIndex: Field): Bytes<32> {
-        const indexHash = std_persistentHash<Field>(cardIndex);
-        return std_persistentHash<Vector<2, Bytes<32>>>([disclose(gameId), indexHash]);
+        const hash = std_transientHash<Field>(cardIndex);
+        const indexHash = hash as Bytes<32>;
+        const hash2 = std_transientHash<Vector<2, Bytes<32>>>([disclose(gameId), indexHash]);
+        return hash2 as Bytes<32>;
     }
 
     // Helper to create composite key for player keys
     circuit makePlayerKeyHash(gameId: Bytes<32>, secretHash: Bytes<32>): Bytes<32> {
-        return std_persistentHash<Vector<2, Bytes<32>>>([disclose(gameId), disclose(secretHash)]);
+        const hash = std_transientHash<Vector<2, Bytes<32>>>([disclose(gameId), disclose(secretHash)]);
+        return hash as Bytes<32>;
     }
 
     // Helper to create composite key for semi-masked to fully-masked mapping
     circuit makeSemiMaskedKey(gameId: Bytes<32>, semiMaskedPoint: CurvePoint): Bytes<32> {
-        const pointHash = std_persistentHash<CurvePoint>(semiMaskedPoint);
-        return std_persistentHash<Vector<2, Bytes<32>>>([disclose(gameId), pointHash]);
+        const hash = std_transientHash<CurvePoint>(semiMaskedPoint);
+        const pointHash = hash as Bytes<32>;
+        const hash2 = std_transientHash<Vector<2, Bytes<32>>>([disclose(gameId), disclose(pointHash)]);
+        return hash2 as Bytes<32>;
     }
 
     // Initialize static deck mappings (only needs to be called once, ever)
@@ -94,14 +99,17 @@ module Deck {
     }
 
     // Use this function to get the secret and inverse scalar for a player in a game
-    export circuit getSecretFromPlayerId(gameId: Bytes<32>, playerId: Uint<64>): [Field, Field] {
+    export circuit getSecretFromPlayerId(gameId: Bytes<32>, _playerId: Uint<64>): [Field, Field] {
         const gid = disclose(gameId);
+        const playerId = disclose(_playerId);
         const secret = player_secret_key(gid, playerId);
-        const secret_hash = std_persistentHash<Field>(secret);
+        const hash = std_transientHash<Field>(secret);
+        const secret_hash = hash as Bytes<32>;
 
         const invScalar = getFieldInverse(disclose(secret));
-        const invScalar_hash = std_persistentHash<Field>(invScalar);
-        
+        const hash2 = std_transientHash<Field>(invScalar);
+        const invScalar_hash = hash2 as Bytes<32>;
+
         const rawPoint = std_hashToCurve<Bytes<32>>(secret_hash);
         const randomPoint = std_ecMul(rawPoint, 8 as Field);
         const mappedPoint = std_ecMul(randomPoint, secret);
@@ -111,18 +119,22 @@ module Deck {
     }
 
     // Get the secret hash for a player (for verification purposes)
-    export circuit getSecretHashForPlayer(gameId: Bytes<32>, playerId: Uint<64>): Bytes<32> {
+    export circuit getSecretHashForPlayer(gameId: Bytes<32>, _playerId: Uint<64>): Bytes<32> {
         const gid = disclose(gameId);
+        const playerId = disclose(_playerId);
         const secret = player_secret_key(gid, playerId);
-        return std_persistentHash<Field>(secret);
+        const hash = std_transientHash<Field>(secret);
+        return hash as Bytes<32>;
     }
 
     // This must be applied by each player for a specific game
     export circuit apply_mask_to_deck(gameId: Bytes<32>, playerIndex: Uint<64>): [] {
         const gid = disclose(gameId);
         const [secret, invScalar] = getSecretFromPlayerId(gid, playerIndex);
-        const secret_hash = std_persistentHash<Field>(secret);
-        const invScalar_hash = std_persistentHash<Field>(invScalar);
+        const hash = std_transientHash<Field>(secret);
+        const secret_hash = hash as Bytes<32>;
+        const hash2 = std_transientHash<Field>(invScalar);
+        const invScalar_hash = hash2 as Bytes<32>;
 
         // Create composite key for this game + secret hash
         const playerKeyHash = makePlayerKeyHash(gid, disclose(secret_hash));
@@ -157,14 +169,16 @@ module Deck {
         const gid = disclose(gameId);
         const disclosed_playerId = disclose(playerId);
         const secret = player_secret_key(gid, disclosed_playerId);
-        const secret_hash = std_persistentHash<Field>(secret);
+        const hash = std_transientHash<Field>(secret);
+        const secret_hash = hash as Bytes<32>;
         
         // Create composite key for verification
         const playerKeyHash = makePlayerKeyHash(gid, disclose(secret_hash));
         assert(gamePlayersKeysHashes.member(disclose(playerKeyHash)), "Player secret key unknown in this game");
 
         const invScalar = getFieldInverse(disclose(secret));
-        const invScalar_hash = std_persistentHash<Field>(invScalar);
+        const hash2 = std_transientHash<Field>(invScalar);
+        const invScalar_hash = hash2 as Bytes<32>;
         const expected_invScalar_hash = gamePlayersKeysInverses.lookup(disclose(playerKeyHash)) as Bytes<32>;
         assert(invScalar_hash == expected_invScalar_hash, "Witness failed: Invalid Field inverse");
 
@@ -251,14 +265,18 @@ module Deck {
     }
 
     circuit getPointFromValue(value: Field): CurvePoint {
-        const card_seed: Bytes<32> = std_persistentHash<Field>(value);
+        const hash = std_transientHash<Field>(value);
+        const card_seed = hash as Bytes<32>;
         const raw_point: CurvePoint = std_hashToCurve<Bytes<32>>(card_seed);
         return std_ecMul(raw_point, 8 as Field);
     }
 
-    circuit applyMaskToPoint(gameId: Bytes<32>, point: CurvePoint, playerIndex: Uint<64>): CurvePoint {
+    circuit applyMaskToPoint(gameId: Bytes<32>, _point: CurvePoint, _playerIndex: Uint<64>): CurvePoint {
+        const point = disclose(_point);
+        const playerIndex = disclose(_playerIndex);
         const gid = disclose(gameId);
-        const secret = player_secret_key(gid, playerIndex);
+        const disclosed_playerIndex = disclose(playerIndex);
+        const secret = player_secret_key(gid, disclosed_playerIndex);
         return std_ecMul(disclose(point), disclose(secret));
     }
 
