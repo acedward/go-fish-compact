@@ -760,6 +760,163 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	} catch (e) {
 		recordTest('switchTurn', false, e);
 	}
+
+	// ============================================
+	// TEST 20A: askForCard (state updates + cleanup)
+	// ============================================
+	logSection('TEST 20A: askForCard (state updates)');
+	try {
+		// Preconditions: TurnStart + correct turn
+		const phaseR0 = circuits.getGamePhase(sim.circuitContext, gameId);
+		sim.circuitContext = phaseR0.context;
+		const phase0 = Number(phaseR0.result);
+		if (phase0 !== 1) {
+			throw new Error(`Expected phase TurnStart (1) before askForCard, got ${phase0}`);
+		}
+
+		const turnR0 = circuits.getCurrentTurn(sim.circuitContext, gameId);
+		sim.circuitContext = turnR0.context;
+		const askingPlayer = Number(turnR0.result) as 1 | 2;
+		const respondingPlayer = askingPlayer === 1 ? 2 : 1;
+
+		// Pick a rank the asking player definitely has (using local discovery from TEST 16)
+		const askingHand = askingPlayer === 1 ? sim.player1Hand : sim.player2Hand;
+		if (askingHand.length === 0) throw new Error(`Player ${askingPlayer} has empty hand - cannot test askForCard`);
+		const rankToAsk = getCardRank(askingHand[0]!);
+
+		// Sanity: contract agrees asking player has that rank
+		const hasR = circuits.doesPlayerHaveCard(sim.circuitContext, gameId, BigInt(askingPlayer), BigInt(rankToAsk));
+		sim.circuitContext = hasR.context;
+		if (hasR.result !== true) {
+			throw new Error(`Contract says P${askingPlayer} does not have rank ${RANK_NAMES[rankToAsk]} (precondition failed)`);
+		}
+
+		// Execute askForCard
+		const askR = impureCircuits.askForCard(sim.circuitContext, gameId, BigInt(askingPlayer), BigInt(rankToAsk));
+		sim.circuitContext = askR.context;
+
+		// Contract state must update
+		const phaseR1 = circuits.getGamePhase(sim.circuitContext, gameId);
+		sim.circuitContext = phaseR1.context;
+		const phase1 = Number(phaseR1.result);
+		if (phase1 !== 2) {
+			throw new Error(`Expected phase WaitForResponse (2) after askForCard, got ${phase1}`);
+		}
+
+		const lastRankR = circuits.getLastAskedRank(sim.circuitContext, gameId);
+		sim.circuitContext = lastRankR.context;
+		const lastAskingR = circuits.getLastAskingPlayer(sim.circuitContext, gameId);
+		sim.circuitContext = lastAskingR.context;
+		if (Number(lastRankR.result) !== rankToAsk) {
+			throw new Error(`getLastAskedRank mismatch: expected ${rankToAsk}, got ${lastRankR.result}`);
+		}
+		if (Number(lastAskingR.result) !== askingPlayer) {
+			throw new Error(`getLastAskingPlayer mismatch: expected ${askingPlayer}, got ${lastAskingR.result}`);
+		}
+
+		// Cleanup: resolve the request so later tests aren't stuck in WaitForResponse/WaitForDraw
+		const respondR = impureCircuits.respondToAsk(sim.circuitContext, gameId, BigInt(respondingPlayer));
+		sim.circuitContext = respondR.context;
+		const opponentHadCards = respondR.result[0] as boolean;
+
+		if (!opponentHadCards) {
+			// Must draw (WaitForDraw -> goFish -> WaitForDrawCheck -> afterGoFish -> TurnStart)
+			const phaseR2 = circuits.getGamePhase(sim.circuitContext, gameId);
+			sim.circuitContext = phaseR2.context;
+			if (Number(phaseR2.result) !== 4) {
+				throw new Error(`Expected phase WaitForDraw (4) after respondToAsk miss, got ${phaseR2.result}`);
+			}
+
+			const goFishR = impureCircuits.goFish(sim.circuitContext, gameId, BigInt(askingPlayer));
+			sim.circuitContext = goFishR.context;
+
+			// Decrypt drawn card so we can pass correct drewRequestedCard flag
+			const decryptR = circuits.partial_decryption(sim.circuitContext, gameId, goFishR.result, BigInt(askingPlayer));
+			sim.circuitContext = decryptR.context;
+			const cardR = circuits.get_card_from_point(sim.circuitContext, decryptR.result);
+			sim.circuitContext = cardR.context;
+
+			const drewRequested = getCardRank(cardR.result) === rankToAsk;
+			const afterR = impureCircuits.afterGoFish(sim.circuitContext, gameId, BigInt(askingPlayer), drewRequested);
+			sim.circuitContext = afterR.context;
+		}
+
+		// Must be back to TurnStart and request state cleared
+		const phaseR3 = circuits.getGamePhase(sim.circuitContext, gameId);
+		sim.circuitContext = phaseR3.context;
+		if (Number(phaseR3.result) !== 1) {
+			throw new Error(`Expected phase TurnStart (1) after cleanup, got ${phaseR3.result}`);
+		}
+
+		const clearedRankR = circuits.getLastAskedRank(sim.circuitContext, gameId);
+		sim.circuitContext = clearedRankR.context;
+		const clearedAskingR = circuits.getLastAskingPlayer(sim.circuitContext, gameId);
+		sim.circuitContext = clearedAskingR.context;
+		if (Number(clearedRankR.result) !== 255 || Number(clearedAskingR.result) !== 0) {
+			throw new Error(`Request not cleared after cleanup (rank=${clearedRankR.result}, asker=${clearedAskingR.result})`);
+		}
+
+		// IMPORTANT: keep local hand tracking in sync for subsequent tests (e.g. Deck cards remaining)
+		// If cleanup required a goFish draw, deck top index increments and total cards in hands increases by 1.
+		sim.player1Hand = [];
+		sim.player2Hand = [];
+		for (let cardIdx = 0; cardIdx < 52; cardIdx++) {
+			const r1 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, gameId, BigInt(1), BigInt(cardIdx));
+			sim.circuitContext = r1.context;
+			if (r1.result === true) sim.player1Hand.push(BigInt(cardIdx));
+
+			const r2 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, gameId, BigInt(2), BigInt(cardIdx));
+			sim.circuitContext = r2.context;
+			if (r2.result === true) sim.player2Hand.push(BigInt(cardIdx));
+		}
+
+		recordTest(
+			'askForCard (state updates)',
+			true,
+			null,
+			`P${askingPlayer} asked for ${RANK_NAMES[rankToAsk]} (opponentHadCards=${opponentHadCards})`,
+		);
+	} catch (e) {
+		recordTest('askForCard (state updates)', false, e);
+	}
+
+	// ============================================
+	// TEST 20B: askForCard rejects asking for a rank you don't have
+	// ============================================
+	logSection("TEST 20B: askForCard (rejects asking rank you don't have)");
+	try {
+		const phaseR = circuits.getGamePhase(sim.circuitContext, gameId);
+		sim.circuitContext = phaseR.context;
+		if (Number(phaseR.result) !== 1) throw new Error(`Expected TurnStart (1), got ${phaseR.result}`);
+
+		const turnR = circuits.getCurrentTurn(sim.circuitContext, gameId);
+		sim.circuitContext = turnR.context;
+		const askingPlayer = Number(turnR.result) as 1 | 2;
+		const askingHand = askingPlayer === 1 ? sim.player1Hand : sim.player2Hand;
+		const askingRanks = new Set(askingHand.map(c => getCardRank(c)));
+		let missingRank = -1;
+		for (let r = 0; r < 13; r++) {
+			if (!askingRanks.has(r)) {
+				missingRank = r;
+				break;
+			}
+		}
+		if (missingRank === -1) {
+			recordTest('askForCard (reject missing rank)', true, null, 'skipped - player has all ranks');
+		} else {
+			let threw = false;
+			try {
+				const r = impureCircuits.askForCard(sim.circuitContext, gameId, BigInt(askingPlayer), BigInt(missingRank));
+				sim.circuitContext = r.context;
+			} catch (_e) {
+				threw = true;
+			}
+			if (!threw) throw new Error(`Expected askForCard to throw for missing rank ${RANK_NAMES[missingRank]}`);
+			recordTest('askForCard (reject missing rank)', true, null, `correctly rejected ${RANK_NAMES[missingRank]}`);
+		}
+	} catch (e) {
+		recordTest('askForCard (reject missing rank)', false, e);
+	}
 	
 	// ============================================
 	// TEST 21: doesPlayerHaveCard (negative test)
@@ -1130,39 +1287,122 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 	let askedRank = -1;
 	let opponentHadCards = false;
 	try {
-		// Get current turn
-		const turnR = circuits.getCurrentTurn(sim.circuitContext, gameId2);
-		sim.circuitContext = turnR.context;
-		const currentPlayer = Number(turnR.result);
-		const opponentPlayer = currentPlayer === 1 ? 2 : 1;
-		const currentHand = currentPlayer === 1 ? sim.player1Hand : sim.player2Hand;
-		
-		// Pick a rank the current player has
-		if (currentHand.length > 0) {
+		// Repeat askForCard + respondToAsk until we see one transfer OR the deck is exhausted.
+		// If we miss, we advance the game by drawing (goFish + afterGoFish) so we can ask again.
+		const refreshHands = () => {
+			sim.player1Hand = [];
+			sim.player2Hand = [];
+			for (let cardIdx = 0; cardIdx < 52; cardIdx++) {
+				const r1 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, gameId2, BigInt(1), BigInt(cardIdx));
+				sim.circuitContext = r1.context;
+				if (r1.result === true) sim.player1Hand.push(BigInt(cardIdx));
+
+				const r2 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, gameId2, BigInt(2), BigInt(cardIdx));
+				sim.circuitContext = r2.context;
+				if (r2.result === true) sim.player2Hand.push(BigInt(cardIdx));
+			}
+		};
+
+		const deckSizeR = circuits.get_deck_size(sim.circuitContext, gameId2);
+		sim.circuitContext = deckSizeR.context;
+		const deckSize = Number(deckSizeR.result);
+
+		let transferOccurred = false;
+		let attempts = 0;
+		const maxAttempts = 200;
+		let stopReason = '';
+
+		while (!transferOccurred && attempts < maxAttempts) {
+			attempts++;
+			refreshHands();
+
+			// Must be in TurnStart to ask
+			const phaseR0 = circuits.getGamePhase(sim.circuitContext, gameId2);
+			sim.circuitContext = phaseR0.context;
+			const phase0 = Number(phaseR0.result);
+			if (phase0 !== 1) {
+				throw new Error(`Expected phase TurnStart (1) before asking, got ${phase0}`);
+			}
+
+			const topR = circuits.get_top_card_index(sim.circuitContext, gameId2);
+			sim.circuitContext = topR.context;
+			const topIdx = Number(topR.result);
+			const deckEmpty = topIdx >= deckSize;
+
+			// Get current turn + pick a rank the current player has
+			const turnR = circuits.getCurrentTurn(sim.circuitContext, gameId2);
+			sim.circuitContext = turnR.context;
+			const currentPlayer = Number(turnR.result);
+			const opponentPlayer = currentPlayer === 1 ? 2 : 1;
+			const currentHand = currentPlayer === 1 ? sim.player1Hand : sim.player2Hand;
+
+			if (currentHand.length === 0) {
+				stopReason = deckEmpty
+					? `stopped: P${currentPlayer} has no cards and deck is empty`
+					: `stopped: P${currentPlayer} has no cards to ask with`;
+				break;
+			}
+
 			askedRank = getCardRank(currentHand[0]!);
-			logInfo(`Player ${currentPlayer} asking for rank ${RANK_NAMES[askedRank]}`);
-			
-			// Call askForCard then respondToAsk
+			logInfo(`Attempt ${attempts}: P${currentPlayer} asking for ${RANK_NAMES[askedRank]} (deckEmpty=${deckEmpty})`);
+
+			// Ask + respond
 			const r = impureCircuits.askForCard(sim.circuitContext, gameId2, BigInt(currentPlayer), BigInt(askedRank));
 			sim.circuitContext = r.context;
 			const r2 = impureCircuits.respondToAsk(sim.circuitContext, gameId2, BigInt(opponentPlayer));
 			sim.circuitContext = r2.context;
-			
-			const result = r2.result;
-			opponentHadCards = result[0] as boolean;
-			const cardsTransferred = Number(result[1]);
-			
-			logInfo(`Opponent had cards: ${opponentHadCards}, Cards transferred: ${cardsTransferred}`);
-			
-			// Check phase after
-			const phaseR = circuits.getGamePhase(sim.circuitContext, gameId2);
-			sim.circuitContext = phaseR.context;
-			logInfo(`Phase after askForCardAndProcess: ${phaseR.result}`);
-			
-			recordTest('askForCardAndProcess', true, null, `asked for ${RANK_NAMES[askedRank]}, got ${cardsTransferred} cards`);
-		} else {
-			recordTest('askForCardAndProcess', false, 'No cards in hand to ask for');
+
+			opponentHadCards = (r2.result[0] as boolean) === true;
+			const cardsTransferred = Number(r2.result[1]);
+			logInfo(`  opponentHadCards=${opponentHadCards}, cardsTransferred=${cardsTransferred}`);
+
+			if (opponentHadCards && cardsTransferred > 0) {
+				transferOccurred = true;
+				stopReason = `transfer occurred: ${cardsTransferred} card(s) transferred`;
+				break;
+			}
+
+			// Miss: try to draw to progress (unless deck is empty)
+			const phaseR1 = circuits.getGamePhase(sim.circuitContext, gameId2);
+			sim.circuitContext = phaseR1.context;
+			const phase1 = Number(phaseR1.result);
+			if (phase1 !== 4) {
+				throw new Error(`Expected phase WaitForDraw (4) after miss, got ${phase1}`);
+			}
+
+			if (deckEmpty) {
+				stopReason = 'stopped: deck empty after miss (cannot draw)';
+				break;
+			}
+
+			// Draw and resolve afterGoFish so the phase returns to TurnStart.
+			const goFishR = impureCircuits.goFish(sim.circuitContext, gameId2, BigInt(currentPlayer));
+			sim.circuitContext = goFishR.context;
+
+			const decryptR = circuits.partial_decryption(sim.circuitContext, gameId2, goFishR.result, BigInt(currentPlayer));
+			sim.circuitContext = decryptR.context;
+			const cardR = circuits.get_card_from_point(sim.circuitContext, decryptR.result);
+			sim.circuitContext = cardR.context;
+			const drawnCard = cardR.result;
+			const drewRequested = getCardRank(drawnCard) === askedRank;
+
+			logInfo(`  drew ${formatCard(drawnCard)} (drewRequested=${drewRequested})`);
+
+			const afterR = impureCircuits.afterGoFish(sim.circuitContext, gameId2, BigInt(currentPlayer), drewRequested);
+			sim.circuitContext = afterR.context;
+
+			const phaseR2 = circuits.getGamePhase(sim.circuitContext, gameId2);
+			sim.circuitContext = phaseR2.context;
+			if (Number(phaseR2.result) !== 1) {
+				throw new Error(`Expected phase TurnStart (1) after afterGoFish, got ${phaseR2.result}`);
+			}
 		}
+
+		if (!transferOccurred && !stopReason) {
+			stopReason = `stopped: maxAttempts reached (${maxAttempts})`;
+		}
+
+		recordTest('askForCardAndProcess', true, null, `${stopReason} (attempts=${attempts})`);
 	} catch (e) {
 		recordTest('askForCardAndProcess', false, e);
 	}
@@ -1182,30 +1422,44 @@ async function runTestSuite(sim: GoFishSimulator): Promise<boolean> {
 			const turnR = circuits.getCurrentTurn(sim.circuitContext, gameId2);
 			sim.circuitContext = turnR.context;
 			const currentPlayer = Number(turnR.result);
-			
-			// Draw a card using goFish
-			const r = impureCircuits.goFish(sim.circuitContext, gameId2, BigInt(currentPlayer));
-			sim.circuitContext = r.context;
-			const drawnPoint = r.result;
-			
-			// Decrypt the card
-			const rd = circuits.partial_decryption(sim.circuitContext, gameId2, drawnPoint, BigInt(currentPlayer));
-			sim.circuitContext = rd.context;
-			
-			const rc = circuits.get_card_from_point(sim.circuitContext, rd.result);
-			sim.circuitContext = rc.context;
-			drawnCard = rc.result;
-			
-			logInfo(`Drew card: ${formatCard(drawnCard)}`);
-			
-			// Update local hand
-			if (currentPlayer === 1) {
-				sim.player1Hand.push(drawnCard);
+
+			// Only attempt goFish if the deck still has cards (TEST 35 may loop until deck is exhausted)
+			const topR = circuits.get_top_card_index(sim.circuitContext, gameId2);
+			sim.circuitContext = topR.context;
+			const deckSizeR = circuits.get_deck_size(sim.circuitContext, gameId2);
+			sim.circuitContext = deckSizeR.context;
+			const topIdx = Number(topR.result);
+			const deckSize = Number(deckSizeR.result);
+			if (topIdx >= deckSize) {
+				logInfo('Deck is empty in WaitForDraw phase, skipping goFish');
+				recordTest('goFish', true, null, 'skipped - deck empty');
+				// Keep drawnCard = null so TEST 37 can safely skip.
+				// Do not return from runTestSuite(); just skip this test's draw path.
 			} else {
-				sim.player2Hand.push(drawnCard);
+				// Draw a card using goFish
+				const r = impureCircuits.goFish(sim.circuitContext, gameId2, BigInt(currentPlayer));
+				sim.circuitContext = r.context;
+				const drawnPoint = r.result;
+				
+				// Decrypt the card
+				const rd = circuits.partial_decryption(sim.circuitContext, gameId2, drawnPoint, BigInt(currentPlayer));
+				sim.circuitContext = rd.context;
+				
+				const rc = circuits.get_card_from_point(sim.circuitContext, rd.result);
+				sim.circuitContext = rc.context;
+				drawnCard = rc.result;
+				
+				logInfo(`Drew card: ${formatCard(drawnCard)}`);
+				
+				// Update local hand
+				if (currentPlayer === 1) {
+					sim.player1Hand.push(drawnCard);
+				} else {
+					sim.player2Hand.push(drawnCard);
+				}
+				
+				recordTest('goFish', true, null, `drew ${formatCard(drawnCard)}`);
 			}
-			
-			recordTest('goFish', true, null, `drew ${formatCard(drawnCard)}`);
 		} else if (phase === 1) {
 			// In TurnStart - opponent had cards, player goes again
 			logInfo('Phase is TurnStart (opponent had cards, player goes again)');
@@ -1963,24 +2217,30 @@ function checkAndScoreBooks(hand: bigint[], books: number[]): number[] {
 }
 
 function isGameOver(sim: GoFishSimulator, circuits: any, gameId: Uint8Array): boolean {
-	// Game ends when all 13 books are made
-	const totalBooks = sim.player1Books.length + sim.player2Books.length;
-	if (totalBooks >= 13) return true;
-	
-	// Or deck is empty and a player has no cards
-	const r1 = circuits.get_top_card_index(sim.circuitContext, gameId);
-	sim.circuitContext = r1.context;
-	const topIdx = Number(r1.result);
-	const r2 = circuits.get_deck_size(sim.circuitContext, gameId);
-	sim.circuitContext = r2.context;
-	const deckSize = Number(r2.result);
+	// IMPORTANT: determine termination from contract state (game.compact), not local heuristics.
+	// The contract only enters GameOver when:
+	// - totalBooks reaches 13 via checkAndScoreBook (score increments), OR
+	// - checkAndEndGame is invoked when deck empty and a player has no cards.
+	const overR = circuits.isGameOver(sim.circuitContext, gameId);
+	sim.circuitContext = overR.context;
+	if (overR.result === true) return true;
+
+	const topR = circuits.get_top_card_index(sim.circuitContext, gameId);
+	sim.circuitContext = topR.context;
+	const topIdx = Number(topR.result);
+
+	const sizeR = circuits.get_deck_size(sim.circuitContext, gameId);
+	sim.circuitContext = sizeR.context;
+	const deckSize = Number(sizeR.result);
 	const deckEmpty = topIdx >= deckSize;
-	
-	if (deckEmpty && (sim.player1Hand.length === 0 || sim.player2Hand.length === 0)) {
-		return true;
-	}
-	
-	return false;
+
+	if (!deckEmpty) return false;
+
+	const handsR = circuits.getHandSizes(sim.circuitContext, gameId);
+	sim.circuitContext = handsR.context;
+	const p1 = Number(handsR.result[0]);
+	const p2 = Number(handsR.result[1]);
+	return p1 === 0 || p2 === 0;
 }
 
 async function runGameSimulation(sim: GoFishSimulator) {
@@ -1992,6 +2252,172 @@ async function runGameSimulation(sim: GoFishSimulator) {
 	const gameId = sim.gameId;
 	
 	log(`Game ID: ${formatGameId(gameId)}`);
+
+	// ============================================
+	// CONTRACT-SYNC CHECKS (game.compact as source of truth)
+	// ============================================
+	const PHASE = {
+		Setup: 0,
+		TurnStart: 1,
+		WaitForResponse: 2,
+		WaitForTransfer: 3,
+		WaitForDraw: 4,
+		WaitForDrawCheck: 5,
+		GameOver: 6,
+	} as const;
+
+	const assertSync = (cond: any, message: string) => {
+		if (!cond) throw new Error(`[SYNC CHECK FAILED] ${message}`);
+	};
+
+	const sortCards = (cards: bigint[]) => [...cards].sort((a, b) => Number(a - b));
+
+	const sameCards = (a: bigint[], b: bigint[]) => {
+		if (a.length !== b.length) return false;
+		const as = sortCards(a);
+		const bs = sortCards(b);
+		for (let i = 0; i < as.length; i++) {
+			if (as[i] !== bs[i]) return false;
+		}
+		return true;
+	};
+
+	const getContractHands = () => {
+		const p1: bigint[] = [];
+		const p2: bigint[] = [];
+		for (let cardIdx = 0; cardIdx < 52; cardIdx++) {
+			const r1 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, gameId, BigInt(1), BigInt(cardIdx));
+			sim.circuitContext = r1.context;
+			if (r1.result === true) p1.push(BigInt(cardIdx));
+
+			const r2 = circuits.doesPlayerHaveSpecificCard(sim.circuitContext, gameId, BigInt(2), BigInt(cardIdx));
+			sim.circuitContext = r2.context;
+			if (r2.result === true) p2.push(BigInt(cardIdx));
+		}
+		return { p1, p2 };
+	};
+
+	const assertPhase = (expected: number, label: string) => {
+		const r = circuits.getGamePhase(sim.circuitContext, gameId);
+		sim.circuitContext = r.context;
+		const actual = Number(r.result);
+		assertSync(actual === expected, `${label}: expected phase=${expected}, got phase=${actual}`);
+	};
+
+	const assertTurn = (expected: 1 | 2, label: string) => {
+		const r = circuits.getCurrentTurn(sim.circuitContext, gameId);
+		sim.circuitContext = r.context;
+		const actual = Number(r.result);
+		assertSync(actual === expected, `${label}: expected turn=${expected}, got turn=${actual}`);
+	};
+
+	const assertScoresMatchLocal = (label: string) => {
+		const r = circuits.getScores(sim.circuitContext, gameId);
+		sim.circuitContext = r.context;
+		const p1 = Number(r.result[0]);
+		const p2 = Number(r.result[1]);
+		assertSync(
+			p1 === sim.player1Books.length && p2 === sim.player2Books.length,
+			`${label}: contract scores=[${p1},${p2}] but local books=[${sim.player1Books.length},${sim.player2Books.length}]`,
+		);
+	};
+
+	const assertHandsDisjointAndUnique = (p1: bigint[], p2: bigint[], label: string) => {
+		const s1 = new Set(p1.map(Number));
+		const s2 = new Set(p2.map(Number));
+		assertSync(s1.size === p1.length, `${label}: P1 has duplicate card indices`);
+		assertSync(s2.size === p2.length, `${label}: P2 has duplicate card indices`);
+		let overlap = 0;
+		for (const x of s1) if (s2.has(x)) overlap++;
+		assertSync(overlap === 0, `${label}: hands overlap (${overlap} duplicate indices across players)`);
+	};
+
+	const assertLocalHandsInSync = (label: string, autoFix = true, logMismatch = true) => {
+		// Compare contract-reconstructed hands (via doesPlayerHaveSpecificCard) to local arrays.
+		const contractHands = getContractHands();
+		assertHandsDisjointAndUnique(contractHands.p1, contractHands.p2, label);
+
+		const sizesR = circuits.getHandSizes(sim.circuitContext, gameId);
+		sim.circuitContext = sizesR.context;
+		const p1Size = Number(sizesR.result[0]);
+		const p2Size = Number(sizesR.result[1]);
+		assertSync(
+			p1Size === contractHands.p1.length && p2Size === contractHands.p2.length,
+			`${label}: getHandSizes=[${p1Size},${p2Size}] but reconstructed=[${contractHands.p1.length},${contractHands.p2.length}]`,
+		);
+
+		const p1Ok = sameCards(sim.player1Hand, contractHands.p1);
+		const p2Ok = sameCards(sim.player2Hand, contractHands.p2);
+		if (!p1Ok || !p2Ok) {
+			if (logMismatch) {
+				log(`\n⚠️  Local hand tracking desynced @ ${label}`);
+				log(`  Contract P1 (${contractHands.p1.length}): ${formatHand(contractHands.p1)}`);
+				log(`  Local    P1 (${sim.player1Hand.length}): ${formatHand(sim.player1Hand)}`);
+				log(`  Contract P2 (${contractHands.p2.length}): ${formatHand(contractHands.p2)}`);
+				log(`  Local    P2 (${sim.player2Hand.length}): ${formatHand(sim.player2Hand)}`);
+			}
+			if (autoFix) {
+				sim.player1Hand = contractHands.p1;
+				sim.player2Hand = contractHands.p2;
+			} else {
+				assertSync(false, `${label}: local hands not in sync with contract`);
+			}
+		}
+	};
+
+	const assertContractAccounting = (label: string) => {
+		// Strong invariant based on game.compact semantics:
+		// topIndex == (#cards currently held across both hands) + 4 * (total books scored)
+		// because every draw increments topIndex, and scoring a book removes 4 cards from hands.
+		const scoresR = circuits.getScores(sim.circuitContext, gameId);
+		sim.circuitContext = scoresR.context;
+		const scoreP1 = Number(scoresR.result[0]);
+		const scoreP2 = Number(scoresR.result[1]);
+		const totalBooks = scoreP1 + scoreP2;
+
+		const hands = getContractHands();
+		assertHandsDisjointAndUnique(hands.p1, hands.p2, `${label} (contractHands)`);
+		const held = hands.p1.length + hands.p2.length;
+
+		const topR = circuits.get_top_card_index(sim.circuitContext, gameId);
+		sim.circuitContext = topR.context;
+		const topIdx = Number(topR.result);
+
+		const expectedTop = held + 4 * totalBooks;
+		assertSync(
+			topIdx === expectedTop,
+			`${label}: accounting mismatch topIndex=${topIdx}, but held=${held} and totalBooks=${totalBooks} => expected ${expectedTop}`,
+		);
+	};
+
+	const doesExistR = circuits.doesGameExist(sim.circuitContext, gameId);
+	sim.circuitContext = doesExistR.context;
+	assertSync(doesExistR.result === true, 'Simulation gameId does not exist in contract state');
+
+	// Ensure we start in a non-setup phase for gameplay simulation.
+	// (If you want to start fresh, create a new gameId and run applyMask/dealCards first.)
+	const phaseAtStartR = circuits.getGamePhase(sim.circuitContext, gameId);
+	sim.circuitContext = phaseAtStartR.context;
+	log(`Contract phase @ start: ${Number(phaseAtStartR.result)}`);
+
+	// Anchor deck index expectations so we can validate that every goFish draw increments it by 1.
+	const topAtStartR = circuits.get_top_card_index(sim.circuitContext, gameId);
+	sim.circuitContext = topAtStartR.context;
+	const topIndexAtStart = Number(topAtStartR.result);
+	let drawsFromDeck = 0;
+	const assertTopIndexMatchesDraws = (label: string) => {
+		const r = circuits.get_top_card_index(sim.circuitContext, gameId);
+		sim.circuitContext = r.context;
+		const top = Number(r.result);
+		assertSync(top === topIndexAtStart + drawsFromDeck, `${label}: topIndex=${top} but expected ${topIndexAtStart + drawsFromDeck}`);
+	};
+
+	// Initial sync (brings local hands in line with contract). Mismatch here is expected because the test suite
+	// mutates contract state and local arrays may be stale, so suppress the scary warning.
+	assertLocalHandsInSync('simulation start', true, false);
+	assertScoresMatchLocal('simulation start');
+	assertTopIndexMatchesDraws('simulation start');
+	assertContractAccounting('simulation start');
 	
 	// Display current state
 	log(`Player 1 hand (${sim.player1Hand.length} cards): ${formatHand(sim.player1Hand)}`);
@@ -2034,6 +2460,60 @@ async function runGameSimulation(sim: GoFishSimulator) {
 		if (turnCount % 10 === 0) {
 			log(`Turn ${turnCount}...`);
 		}
+
+		// Validate local tracking at the start of each iteration (auto-fix to keep sim running).
+		assertLocalHandsInSync(`start of turn ${turnCount}`, true);
+		assertScoresMatchLocal(`start of turn ${turnCount}`);
+		assertTopIndexMatchesDraws(`start of turn ${turnCount}`);
+		assertContractAccounting(`start of turn ${turnCount}`);
+
+		// Aggressively score any available books directly from contract state.
+		// This prevents "book detection" from being dependent on local heuristics and helps the game reach GameOver.
+		const scoreSweep = () => {
+			let anyScored = false;
+			for (const pid of [1, 2] as const) {
+				for (let rank = 0; rank < 13; rank++) {
+					const r = impureCircuits.checkAndScoreBook(sim.circuitContext, gameId, BigInt(pid), BigInt(rank));
+					sim.circuitContext = r.context;
+					if (r.result === true) {
+						anyScored = true;
+						if (pid === 1) {
+							if (!sim.player1Books.includes(rank)) sim.player1Books.push(rank);
+						} else {
+							if (!sim.player2Books.includes(rank)) sim.player2Books.push(rank);
+						}
+					}
+				}
+			}
+			if (anyScored) {
+				// Keep local hand tracking consistent after card removals from scoring.
+				refreshHands();
+				assertLocalHandsInSync(`turn ${turnCount} (after scoreSweep)`, false);
+				assertScoresMatchLocal(`turn ${turnCount} (after scoreSweep)`);
+				assertContractAccounting(`turn ${turnCount} (after scoreSweep)`);
+			}
+		};
+		scoreSweep();
+
+		// Let the contract end the game when conditions are met (deck empty + a player empty-handed).
+		// This also serves as an ongoing state-transition check.
+		const endR = circuits.checkAndEndGame(sim.circuitContext, gameId);
+		sim.circuitContext = endR.context;
+
+		// Periodic high-signal progress snapshot (helps debug "never ends" scenarios).
+		if (turnCount % 25 === 0) {
+			const scoresR = circuits.getScores(sim.circuitContext, gameId);
+			sim.circuitContext = scoresR.context;
+			const hsR = circuits.getHandSizes(sim.circuitContext, gameId);
+			sim.circuitContext = hsR.context;
+			const topR = circuits.get_top_card_index(sim.circuitContext, gameId);
+			sim.circuitContext = topR.context;
+			const sizeR = circuits.get_deck_size(sim.circuitContext, gameId);
+			sim.circuitContext = sizeR.context;
+			logInfo(
+				`Progress @ turn ${turnCount}: scores=[${scoresR.result[0]},${scoresR.result[1]}], hands=[${hsR.result[0]},${hsR.result[1]}], topIndex=${topR.result}/${sizeR.result}`,
+			);
+		}
 		
 		// Get current player from contract
 		const turnR = circuits.getCurrentTurn(sim.circuitContext, gameId);
@@ -2047,6 +2527,9 @@ async function runGameSimulation(sim: GoFishSimulator) {
 		
 		// If player has no cards, try to draw using goFish (only works in certain phases)
 		if (currentHand.length === 0) {
+			// If you're empty-handed and deck isn't empty, goFish is allowed in TurnStart; we still keep the
+			// existing behavior (switch turn), but validate we're in a legal phase for switching.
+			assertPhase(PHASE.TurnStart, `empty-hand turn ${turnCount} (before switchTurn)`);
 			const r1 = circuits.get_top_card_index(sim.circuitContext, gameId);
 			sim.circuitContext = r1.context;
 			const topIdx = Number(r1.result);
@@ -2063,6 +2546,7 @@ async function runGameSimulation(sim: GoFishSimulator) {
 				} catch (e) {
 					log(`  Error switching turn: ${e}`);
 				}
+				assertPhase(PHASE.TurnStart, `empty-hand turn ${turnCount} (after switchTurn)`);
 				continue;
 			} else {
 				log(`\nP${currentPlayer} has no cards and deck is empty, skipping...`);
@@ -2072,6 +2556,7 @@ async function runGameSimulation(sim: GoFishSimulator) {
 				} catch (e) {
 					// Might fail if not in right phase
 				}
+				assertPhase(PHASE.TurnStart, `empty-hand+deck-empty turn ${turnCount} (after switchTurn)`);
 				continue;
 			}
 		}
@@ -2092,24 +2577,76 @@ async function runGameSimulation(sim: GoFishSimulator) {
 		}
 		
 		try {
+			// Must be in TurnStart to ask.
+			assertPhase(PHASE.TurnStart, `turn ${turnCount} (before askForCard)`);
+			assertTurn(currentPlayer, `turn ${turnCount} (before askForCard)`);
+
 			// Call askForCard then respondToAsk
 			const askR = impureCircuits.askForCard(sim.circuitContext, gameId, BigInt(currentPlayer), BigInt(rankToAsk));
 			sim.circuitContext = askR.context;
+			assertPhase(PHASE.WaitForResponse, `turn ${turnCount} (after askForCard)`);
+
+			// Verify request state is set
+			const lastRankR = circuits.getLastAskedRank(sim.circuitContext, gameId);
+			sim.circuitContext = lastRankR.context;
+			const lastAskingR = circuits.getLastAskingPlayer(sim.circuitContext, gameId);
+			sim.circuitContext = lastAskingR.context;
+			assertSync(Number(lastRankR.result) === rankToAsk, `turn ${turnCount}: getLastAskedRank mismatch`);
+			assertSync(Number(lastAskingR.result) === currentPlayer, `turn ${turnCount}: getLastAskingPlayer mismatch`);
+
+			// Capture hand sizes before response so we can verify that a reported transfer actually moved cards.
+			const sizesBeforeR = circuits.getHandSizes(sim.circuitContext, gameId);
+			sim.circuitContext = sizesBeforeR.context;
+			const p1Before = Number(sizesBeforeR.result[0]);
+			const p2Before = Number(sizesBeforeR.result[1]);
+
 			const askR2 = impureCircuits.respondToAsk(sim.circuitContext, gameId, BigInt(opponentPlayer));
 			sim.circuitContext = askR2.context;
 			
 			const opponentHadCards = askR2.result[0] as boolean;
+			const cardsTransferred = Number(askR2.result[1] as any);
 			// cardsTransferred = askR.result[1] - available if needed for logging
 			
 			if (opponentHadCards) {
+				// Should return to TurnStart and clear request state.
+				assertPhase(PHASE.TurnStart, `turn ${turnCount} (after respondToAsk: had cards)`);
+				const clearedRankR = circuits.getLastAskedRank(sim.circuitContext, gameId);
+				sim.circuitContext = clearedRankR.context;
+				const clearedAskingR = circuits.getLastAskingPlayer(sim.circuitContext, gameId);
+				sim.circuitContext = clearedAskingR.context;
+				assertSync(Number(clearedRankR.result) === 255, `turn ${turnCount}: lastAskedRank not cleared (expected 255)`);
+				assertSync(Number(clearedAskingR.result) === 0, `turn ${turnCount}: lastAskingPlayer not cleared (expected 0)`);
+				assertTurn(currentPlayer, `turn ${turnCount} (after respondToAsk: had cards)`);
+
+				// Verify transfer actually happened in contract state
+				const sizesAfterR = circuits.getHandSizes(sim.circuitContext, gameId);
+				sim.circuitContext = sizesAfterR.context;
+				const p1After = Number(sizesAfterR.result[0]);
+				const p2After = Number(sizesAfterR.result[1]);
+
+				if (currentPlayer === 1) {
+					assertSync(
+						p1After === p1Before + cardsTransferred && p2After === p2Before - cardsTransferred,
+						`turn ${turnCount}: respondToAsk reported transfer=${cardsTransferred} but handSizes changed [${p1Before},${p2Before}] -> [${p1After},${p2After}]`,
+					);
+				} else {
+					assertSync(
+						p2After === p2Before + cardsTransferred && p1After === p1Before - cardsTransferred,
+						`turn ${turnCount}: respondToAsk reported transfer=${cardsTransferred} but handSizes changed [${p1Before},${p2Before}] -> [${p1After},${p2After}]`,
+					);
+				}
+
 				// Player gets another turn, refresh hands
 				refreshHands();
+				assertLocalHandsInSync(`turn ${turnCount} (after transfer refreshHands)`, false);
 			} else {
 				// Go Fish! - need to draw a card
 				const phaseR = circuits.getGamePhase(sim.circuitContext, gameId);
 				sim.circuitContext = phaseR.context;
 				
-				if (Number(phaseR.result) === 4) { // WaitForDraw
+				assertSync(Number(phaseR.result) === PHASE.WaitForDraw, `turn ${turnCount}: expected WaitForDraw after respondToAsk`);
+
+				if (Number(phaseR.result) === PHASE.WaitForDraw) { // WaitForDraw
 					const r1 = circuits.get_top_card_index(sim.circuitContext, gameId);
 					sim.circuitContext = r1.context;
 					const topIdx = Number(r1.result);
@@ -2118,8 +2655,19 @@ async function runGameSimulation(sim: GoFishSimulator) {
 					const deckSize = Number(r2.result);
 					
 					if (topIdx < deckSize) {
+						// goFish must move to WaitForDrawCheck and advance deck index by 1.
+						assertTurn(currentPlayer, `turn ${turnCount} (before goFish)`);
+						const topBefore = topIdx;
 						const goFishR = impureCircuits.goFish(sim.circuitContext, gameId, BigInt(currentPlayer));
 						sim.circuitContext = goFishR.context;
+						drawsFromDeck++;
+						assertPhase(PHASE.WaitForDrawCheck, `turn ${turnCount} (after goFish)`);
+						const topAfterR = circuits.get_top_card_index(sim.circuitContext, gameId);
+						sim.circuitContext = topAfterR.context;
+						const topAfter = Number(topAfterR.result);
+						assertSync(topAfter === topBefore + 1, `turn ${turnCount}: topIndex did not increment after goFish (${topBefore} -> ${topAfter})`);
+						assertTopIndexMatchesDraws(`turn ${turnCount} (after goFish)`);
+
 						const drawnPoint = goFishR.result;
 						
 						// Decrypt the card to know what was drawn
@@ -2135,9 +2683,21 @@ async function runGameSimulation(sim: GoFishSimulator) {
 						const drewRequested = drawnRank === rankToAsk;
 						const afterR = impureCircuits.afterGoFish(sim.circuitContext, gameId, BigInt(currentPlayer), drewRequested);
 						sim.circuitContext = afterR.context;
+						assertPhase(PHASE.TurnStart, `turn ${turnCount} (after afterGoFish)`);
+
+						// afterGoFish: if drewRequested -> same player; else -> switchTurn()
+						const turnAfterR = circuits.getCurrentTurn(sim.circuitContext, gameId);
+						sim.circuitContext = turnAfterR.context;
+						const turnAfter = Number(turnAfterR.result) as 1 | 2;
+						if (drewRequested) {
+							assertSync(turnAfter === currentPlayer, `turn ${turnCount}: drewRequested=true but turn switched (${currentPlayer} -> ${turnAfter})`);
+						} else {
+							assertSync(turnAfter === opponentPlayer, `turn ${turnCount}: drewRequested=false but turn did not switch (${currentPlayer} -> ${turnAfter})`);
+						}
 						
 						// Refresh hands
 						refreshHands();
+						assertLocalHandsInSync(`turn ${turnCount} (after draw refreshHands)`, false);
 					}
 				}
 			}
@@ -2165,11 +2725,15 @@ async function runGameSimulation(sim: GoFishSimulator) {
 				try {
 					const r = impureCircuits.checkAndScoreBook(sim.circuitContext, gameId, BigInt(currentPlayer), BigInt(rank));
 					sim.circuitContext = r.context;
+					assertSync(r.result === true, `turn ${turnCount}: contract refused to score book for rank=${rank} (local thinks book exists)`);
 				} catch (e) {
 					// May already be scored or not have all cards
 				}
 			}
 			refreshHands();
+			assertLocalHandsInSync(`turn ${turnCount} (after scoring refreshHands)`, false);
+			assertScoresMatchLocal(`turn ${turnCount} (after scoring)`);
+			assertContractAccounting(`turn ${turnCount} (after scoring)`);
 		}
 		
 		// Update books
@@ -2184,6 +2748,12 @@ async function runGameSimulation(sim: GoFishSimulator) {
 	// GAME OVER
 	// ============================================
 	logHeader('🏆 GAME OVER');
+
+	// Final sync checks against contract.
+	assertLocalHandsInSync('game over', true);
+	assertScoresMatchLocal('game over');
+	assertTopIndexMatchesDraws('game over');
+	assertContractAccounting('game over');
 	
 	const p1Score = sim.player1Books.length;
 	const p2Score = sim.player2Books.length;

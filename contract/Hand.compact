@@ -1,8 +1,10 @@
-
 module Hand {
     import CompactStandardLibrary;
     import CompactStandardLibrary prefix std_;
 
+    // import './HashPersistent' prefix h_;
+    import './HashTransient' prefix h_;
+    
     // Card ownership per game: maps (gameId, card) -> playerId (1 or 2, 0 = no owner)
     // We use a hash of (gameId, card)
     export ledger cardOwnership: Map<Bytes<32>, Uint<8>>;
@@ -14,10 +16,8 @@ module Hand {
     // Helper to create a composite key from gameId and card point
     circuit makeCardKey(gameId: Bytes<32>, card: CurvePoint): Bytes<32> {
         // Hash the combination of gameId and card to create a unique key
-        const hash = std_transientHash<CurvePoint>(card);
-        const cardHash = hash as Bytes<32>;
-        const hash2 = std_transientHash<Vector<2, Bytes<32>>>([disclose(gameId), cardHash]);
-        return hash2 as Bytes<32>;
+        const cardHash = h_hashCurvePoint(card);
+        return h_hashVector([disclose(gameId), cardHash]);
     }
 
     export circuit init_hands(gameId: Bytes<32>): [] {
