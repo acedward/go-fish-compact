@@ -122,7 +122,7 @@ export circuit dealCards(gameId: Bytes<32>, playerId: Uint<64>): [] {
 }
 
 // Deal a single card to a player during setup
-export circuit dealCard(gameId: Bytes<32>, _toPlayerId: Uint<64>): CurvePoint {
+circuit dealCard(gameId: Bytes<32>, _toPlayerId: Uint<64>): CurvePoint {
     const toPlayerId = disclose(_toPlayerId);
     const gid = disclose(gameId);
     const currentPhase = go_fish_getPhase(gid);
@@ -137,7 +137,7 @@ export circuit dealCard(gameId: Bytes<32>, _toPlayerId: Uint<64>): CurvePoint {
 }
 
 // Start the game after dealing is complete
-export circuit startGame(gameId: Bytes<32>): [] {
+circuit startGame(gameId: Bytes<32>): [] {
     return go_fish_startGame(disclose(gameId));
 }
 
@@ -158,7 +158,7 @@ export circuit partial_decryption(gameId: Bytes<32>, point: CurvePoint, playerId
 }
 
 // Transfer a single card from one player to another (internal use)
-export circuit moveCardFromPlayerToPlayerCardInHand(gameId: Bytes<32>, fromPlayerId: Uint<64>, _semiMaskedPoint: CurvePoint): [] {
+circuit moveCardFromPlayerToPlayerCardInHand(gameId: Bytes<32>, fromPlayerId: Uint<64>, _semiMaskedPoint: CurvePoint): [] {
     const gid = disclose(gameId);
     const disclosed_playerId = disclose(fromPlayerId);
     const semiMaskedPoint = disclose(_semiMaskedPoint);
@@ -181,7 +181,7 @@ export circuit moveCardFromPlayerToPlayerCardInHand(gameId: Bytes<32>, fromPlaye
 }
 
 // Transfer all cards of a rank from opponent to current player
-export circuit transferAllCardsOfRank(gameId: Bytes<32>, fromPlayerId: Uint<64>, targetRank: Uint<32>): [] {
+circuit transferAllCardsOfRank(gameId: Bytes<32>, fromPlayerId: Uint<64>, targetRank: Uint<32>): [] {
     const gid = disclose(gameId);
     const disclosed_playerId = disclose(fromPlayerId);
     const disclosed_rank = disclose(targetRank);
@@ -196,7 +196,7 @@ export circuit transferAllCardsOfRank(gameId: Bytes<32>, fromPlayerId: Uint<64>,
 }
 
 // Transfer a single card of a specific rank
-export circuit transferCardOfRank(gameId: Bytes<32>, fromPlayerId: Uint<64>, targetRank: Uint<32>, cardSuit: Uint<32>): Boolean {
+circuit transferCardOfRank(gameId: Bytes<32>, fromPlayerId: Uint<64>, targetRank: Uint<32>, cardSuit: Uint<32>): Boolean {
     const gid = disclose(gameId);
     const disclosed_playerId = disclose(fromPlayerId);
     const disclosed_rank = disclose(targetRank);
@@ -440,7 +440,7 @@ export circuit doesPlayerHaveCard(gameId: Bytes<32>, playerId: Uint<64>, _target
     
 }
 
-export circuit countCardsOfRank(gameId: Bytes<32>, playerId: Uint<64>, targetRank: Uint<32>): Uint<8> {
+circuit countCardsOfRank(gameId: Bytes<32>, playerId: Uint<64>, targetRank: Uint<32>): Uint<8> {
     const gid = disclose(gameId);
     const disclosed_playerId = disclose(playerId);
     const disclosed_rank = disclose(targetRank);
@@ -639,18 +639,21 @@ export circuit doesPlayerHaveSpecificCard(gameId: Bytes<32>, playerId: Uint<64>,
     return false;
 }
 
+// Test helper
 export circuit getLastAskedRank(gameId: Bytes<32>): Uint<32> {
     const gid = disclose(gameId);
     assert(go_fish_doesGameExist(gid), "Game does not exist");
     return go_fish_getLastAskedRank(gid);
 }
 
+// Test helper
 export circuit getLastAskingPlayer(gameId: Bytes<32>): Uint<64> {
     const gid = disclose(gameId);
     assert(go_fish_doesGameExist(gid), "Game does not exist");
     return go_fish_getLastAskingPlayer(gid);
 }
 
+// Test helper
 export circuit hasMaskApplied(gameId: Bytes<32>, playerId: Uint<64>): Boolean {
     const gid = disclose(gameId);
     // Allow checking even if game doesn't exist yet (returns false)
@@ -660,13 +663,14 @@ export circuit hasMaskApplied(gameId: Bytes<32>, playerId: Uint<64>): Boolean {
     return go_fish_hasMaskApplied(gid, playerId);
 }
 
+// Test helper
 export circuit getCardsDealt(gameId: Bytes<32>, playerId: Uint<64>): Uint<64> {
     const gid = disclose(gameId);
     assert(go_fish_doesGameExist(gid), "Game does not exist");
     return go_fish_getCardsDealt(gid, playerId);
 }
 
-// Check if a game exists
+// Test helper
 export circuit doesGameExist(gameId: Bytes<32>): Boolean {
     return go_fish_doesGameExist(disclose(gameId));
 }
@@ -723,9 +727,9 @@ export circuit doesGameExist(gameId: Bytes<32>): Boolean {
 //     return deck_init_static_deck();
 // }
 
-export circuit a_deck_init_deck(gameId: Bytes<32>): [] {
-    return deck_init_deck(disclose(gameId));
-}
+// export circuit a_deck_init_deck(gameId: Bytes<32>): [] {
+//     return deck_init_deck(disclose(gameId));
+// }
 
 // export circuit _deck_getSecretFromPlayerId(gameId: Bytes<32>, playerId: Uint<64>): [Field, Field] {
 //     const x = deck_getSecretFromPlayerId(disclose(gameId), disclose(playerId));
@@ -737,9 +741,9 @@ export circuit a_deck_init_deck(gameId: Bytes<32>): [] {
 //     return disclose(x);
 // }
 
-export circuit a_deck_apply_mask_to_deck(gameId: Bytes<32>, playerIndex: Uint<64>): [] {
-    return deck_apply_mask_to_deck(disclose(gameId), disclose(playerIndex));
-}
+// export circuit a_deck_apply_mask_to_deck(gameId: Bytes<32>, playerIndex: Uint<64>): [] {
+//     return deck_apply_mask_to_deck(disclose(gameId), disclose(playerIndex));
+// }
 
 // export circuit _deck_getCardFromPoint(point: CurvePoint): Field {
 //     return deck_getCardFromPoint(disclose(point));
@@ -773,15 +777,15 @@ export circuit a_deck_apply_mask_to_deck(gameId: Bytes<32>, playerIndex: Uint<64
 //     return deck_lookupFullyMasked(disclose(gameId), disclose(semiMasked));
 // }
 
-export circuit a_deck_shuffle_deck(gameId: Bytes<32>, playerIndex: Uint<64>): [] {
-    return deck_shuffle_deck(disclose(gameId), disclose(playerIndex));
-}
+// export circuit a_deck_shuffle_deck(gameId: Bytes<32>, playerIndex: Uint<64>): [] {
+//     return deck_shuffle_deck(disclose(gameId), disclose(playerIndex));
+// }
 
 // // ---- Re-export wrappers for Hand module (`contract/Hand.compact`) ----
 
-export circuit _hand_init_hands(gameId: Bytes<32>): [] {
-    return hand_init_hands(disclose(gameId));
-}
+// export circuit _hand_init_hands(gameId: Bytes<32>): [] {
+//     return hand_init_hands(disclose(gameId));
+// }
 
 // export circuit _hand_getHandSize(gameId: Bytes<32>, playerId: Uint<64>): Uint<64> {
 //     return hand_getHandSize(disclose(gameId), disclose(playerId));
@@ -809,9 +813,9 @@ export circuit _hand_init_hands(gameId: Bytes<32>): [] {
 
 // // ---- Re-export wrappers for GoFish module (`contract/GoFish.compact`) ----
 
-export circuit _go_fish_init_game(gameId: Bytes<32>): [] {
-    return go_fish_init_game(disclose(gameId));
-}
+// export circuit _go_fish_init_game(gameId: Bytes<32>): [] {
+//     return go_fish_init_game(disclose(gameId));
+// }
 
 // export circuit _go_fish_doesGameExist(gameId: Bytes<32>): Boolean {
 //     return go_fish_doesGameExist(disclose(gameId));
@@ -877,9 +881,9 @@ export circuit _go_fish_init_game(gameId: Bytes<32>): [] {
 //     return go_fish_getLastAskingPlayer(disclose(gameId));
 // }
 
-export circuit _go_fish_markMaskApplied(gameId: Bytes<32>, playerId: Uint<64>): [] {
-    return go_fish_markMaskApplied(disclose(gameId), disclose(playerId));
-}
+// export circuit _go_fish_markMaskApplied(gameId: Bytes<32>, playerId: Uint<64>): [] {
+//     return go_fish_markMaskApplied(disclose(gameId), disclose(playerId));
+// }
 
 // export circuit _go_fish_hasMaskApplied(gameId: Bytes<32>, playerId: Uint<64>): Boolean {
 //     return go_fish_hasMaskApplied(disclose(gameId), disclose(playerId));

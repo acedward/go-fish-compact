@@ -222,33 +222,33 @@ module Deck {
         return gameSemiMaskedToFullyMasked.lookup(disclose(mappingKey)) as CurvePoint;
     }
 
-    circuit field_to_uint64_safe(val: Field): Uint<64> {
-        const SHIFT: Field = 18446744073709551616 as Field; // 2^64
+    // circuit field_to_uint64_safe(val: Field): Uint<64> {
+    //     const SHIFT: Field = 18446744073709551616 as Field; // 2^64
 
-        const parts = split_field_bits(val);
-        const high = parts[0];
-        const low = parts[1];
-        assert(val == high * SHIFT + (low as Field), "Safe truncation failed 1");
+    //     const parts = split_field_bits(val);
+    //     const high = parts[0];
+    //     const low = parts[1];
+    //     assert(val == high * SHIFT + (low as Field), "Safe truncation failed 1");
 
-        const parts2 = split_field_bits(high);
-        const h2 = parts2[0];
-        const l2 = parts2[1];
-        assert(high == h2 * SHIFT + (l2 as Field), "Safe truncation failed 2");
+    //     const parts2 = split_field_bits(high);
+    //     const h2 = parts2[0];
+    //     const l2 = parts2[1];
+    //     assert(high == h2 * SHIFT + (l2 as Field), "Safe truncation failed 2");
 
-        const parts3 = split_field_bits(h2);
-        const h3 = parts3[0];
-        const l3 = parts3[1];
-        assert(h2 == h3 * SHIFT + (l3 as Field), "Safe truncation failed 3");
+    //     const parts3 = split_field_bits(h2);
+    //     const h3 = parts3[0];
+    //     const l3 = parts3[1];
+    //     assert(h2 == h3 * SHIFT + (l3 as Field), "Safe truncation failed 3");
 
-        const parts4 = split_field_bits(h3);
-        const h4 = parts4[0];
-        const l4 = parts4[1];
-        assert(h3 == h4 * SHIFT + (l4 as Field), "Safe truncation failed 4");
+    //     const parts4 = split_field_bits(h3);
+    //     const h4 = parts4[0];
+    //     const l4 = parts4[1];
+    //     assert(h3 == h4 * SHIFT + (l4 as Field), "Safe truncation failed 4");
 
-        assert(h4 == 0 as Field, "High part too large - potential witness overflow");
+    //     assert(h4 == 0 as Field, "High part too large - potential witness overflow");
 
-        return low;
-    }
+    //     return low;
+    // }
 
     circuit getPointFromValue(value: Field): CurvePoint {
         const card_seed = h_hashField(value);

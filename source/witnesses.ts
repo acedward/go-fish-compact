@@ -91,18 +91,26 @@ export const witnesses = {
 
 	get_sorted_deck_witness: (
 		{privateState}: WitnessContext<Ledger, PrivateState>,
-		input: {point: {x: bigint; y: bigint}; weight: bigint}[],
-	): [PrivateState, {point: {x: bigint; y: bigint}; weight: bigint}[]] => {
+		input: {x: bigint; y: bigint}[],
+	): [PrivateState, {x: bigint; y: bigint}[]] => {
+		const mappedPoints = input.map((point) => {
+			return {
+				x: point.x,
+				y: point.y,
+				weight: Math.floor(Math.random() * 1000000) | 0,
+			};
+		});
+
 		for (let i = 0; i < input.length; i++) {
 			for (let j = i + 1; j < input.length; j++) {
-				if (input[i]!.weight > input[j]!.weight) {
+				if (mappedPoints[i]!.weight > mappedPoints[j]!.weight) {
 					const temp = input[i];
 					input[i] = input[j]!;
 					input[j] = temp!;
 				}
 			}
 		}
-		return [privateState, input];
+		return [privateState, mappedPoints.map(x => ({x: x.x, y: x.y}))];
 	},
 	split_field_bits: (
 		{privateState}: WitnessContext<Ledger, PrivateState>,
